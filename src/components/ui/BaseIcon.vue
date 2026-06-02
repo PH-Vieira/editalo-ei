@@ -46,6 +46,7 @@ const ICONS: Record<string, string> = {
   resolution: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/>',
   fps: '<circle cx="12" cy="12" r="8.5"/><path d="M12 12l4-2M9 12h.01M15 9.5h.01M15 14.5h.01M9 14.5h.01"/>',
   magnet: '<path d="M6 4v6a6 6 0 0012 0V4M6 4H3M18 4h3M6 10H3M18 10h3"/>',
+  check: '<path d="M20 6L9 17l-5-5"/>',
   undo: '<path d="M3 10h10a6 6 0 010 12H9M3 10l4-4M3 10l4 4"/>',
   redo: '<path d="M21 10H11a6 6 0 000 12h4M21 10l-4-4M21 10l-4 4"/>',
 }

@@ -88,7 +88,9 @@ export async function saveProject(project: Project, path = 'projeto.elei'): Prom
   return path
 }
 
-/* ---------- Exportação (trim + concat → mp4) ---------- */
+/* ---------- Exportação ---------- */
+
+export type ExportFormat = 'mp4' | 'mp3' | 'gif'
 
 export interface ExportSegment {
   path: string
@@ -102,6 +104,7 @@ export interface ExportRequest {
   width: number
   height: number
   fps: number
+  format: ExportFormat
 }
 
 export interface ExportProgress {
@@ -110,13 +113,21 @@ export interface ExportProgress {
   output?: string
 }
 
-/** Pede o destino do arquivo .mp4 ao usuário. */
-export async function pickExportPath(suggested: string): Promise<string | null> {
+/** Pede o destino do arquivo ao usuário, filtrando pelo formato escolhido. */
+export async function pickExportPath(
+  suggested: string,
+  format: ExportFormat = 'mp4',
+): Promise<string | null> {
   if (!isTauri()) return suggested
   const { save } = await import('@tauri-apps/api/dialog')
+  const filters: Record<ExportFormat, { name: string; extensions: string[] }> = {
+    mp4: { name: 'Vídeo MP4',    extensions: ['mp4'] },
+    mp3: { name: 'Áudio MP3',    extensions: ['mp3'] },
+    gif: { name: 'GIF Animado',  extensions: ['gif'] },
+  }
   return (await save({
     defaultPath: suggested,
-    filters: [{ name: 'Vídeo MP4', extensions: ['mp4'] }],
+    filters: [filters[format]],
   })) as string | null
 }
 

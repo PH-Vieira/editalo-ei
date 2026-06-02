@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import IconButton from '@/components/ui/IconButton.vue'
 import BaseIcon from '@/components/ui/BaseIcon.vue'
+import ExportModal from '@/components/ui/ExportModal.vue'
 import { useProjectStore } from '@/stores/project'
 import { useTimelineStore } from '@/stores/timeline'
 import { useUiStore } from '@/stores/ui'
@@ -10,6 +12,7 @@ import {
   pickExportPath,
   onExportProgress,
   isTauri,
+  type ExportFormat,
   type ExportSegment,
 } from '@/tauri/commands'
 
@@ -18,6 +21,54 @@ const timeline = useTimelineStore()
 const ui = useUiStore()
 const { project: proj } = storeToRefs(project)
 const { isImporting } = storeToRefs(ui)
+
+/* ---- Modal de exportação ---- */
+const showExportModal = ref(false)
+const exportFormat = ref<ExportFormat>('mp4')
+
+function openExportModal() {
+  const segments = buildSegments()
+  if (isTauri() && segments.length === 0) {
+    ui.notify('Importe vídeos reais e adicione-os à timeline para exportar', 'warning')
+    return
+  }
+  showExportModal.value = true
+}
+
+async function confirmExport() {
+  showExportModal.value = false
+  const format = exportFormat.value
+  const ext = format  // 'mp4' | 'mp3' | 'gif'
+  const out = await pickExportPath(`${proj.value.name}.${ext}`, format)
+  if (!out) return
+
+  ui.setRenderStatus('exporting', 0)
+  const label = { mp4: 'vídeo', mp3: 'áudio', gif: 'GIF' }[format]
+  ui.notify(`Exportando ${label}…`, 'info')
+
+  const stop = await onExportProgress((p) => {
+    ui.setRenderStatus(p.done ? 'ready' : 'exporting', Math.round(p.progress * 100))
+  })
+
+  try {
+    await exportVideo({
+      segments: buildSegments(),
+      outputPath: out,
+      width: proj.value.width,
+      height: proj.value.height,
+      fps: proj.value.fps,
+      format,
+    })
+    ui.setRenderStatus('ready', 100)
+    ui.notify(`Exportação concluída (.${ext}) 🎬`, 'success')
+  } catch (e) {
+    ui.setRenderStatus('error', 0)
+    ui.notify(`Falha na exportação: ${String(e).slice(0, 120)}`, 'danger')
+  } finally {
+    stop()
+    setTimeout(() => ui.setRenderStatus('ready', 0), 600)
+  }
+}
 
 /** Monta os segmentos (trim) dos clipes de vídeo, em ordem de tempo. */
 function buildSegments(): ExportSegment[] {
@@ -30,43 +81,6 @@ function buildSegments(): ExportSegment[] {
       return asset?.src ? { path: asset.src, inPoint: c.inPoint, duration: c.duration } : null
     })
     .filter((s): s is ExportSegment => s !== null)
-}
-
-async function onExport() {
-  const segments = buildSegments()
-
-  if (isTauri() && segments.length === 0) {
-    ui.notify('Importe vídeos reais e adicione-os à timeline para exportar', 'warning')
-    return
-  }
-
-  const out = await pickExportPath(`${proj.value.name}.mp4`)
-  if (!out) return // cancelado
-
-  ui.setRenderStatus('exporting', 0)
-  ui.notify('Exportando vídeo…', 'info')
-
-  const stop = await onExportProgress((p) => {
-    ui.setRenderStatus(p.done ? 'ready' : 'exporting', Math.round(p.progress * 100))
-  })
-
-  try {
-    await exportVideo({
-      segments,
-      outputPath: out,
-      width: proj.value.width,
-      height: proj.value.height,
-      fps: proj.value.fps,
-    })
-    ui.setRenderStatus('ready', 100)
-    ui.notify('Exportação concluída 🎬', 'success')
-  } catch (e) {
-    ui.setRenderStatus('error', 0)
-    ui.notify(`Falha na exportação: ${String(e).slice(0, 120)}`, 'danger')
-  } finally {
-    stop()
-    setTimeout(() => ui.setRenderStatus('ready', 0), 600)
-  }
 }
 </script>
 
@@ -130,13 +144,20 @@ async function onExport() {
         :active="ui.inspectorVisible"
         @click="ui.toggleInspector()"
       />
-      <button class="export-btn" type="button" @click="onExport">
+      <button class="export-btn" type="button" @click="openExportModal">
         <BaseIcon name="export" :size="15" />
         <span>Exportar</span>
         <kbd>{{ timeline.contentEnd.toFixed(0) }}s</kbd>
       </button>
     </div>
   </header>
+
+  <ExportModal
+    v-if="showExportModal"
+    v-model="exportFormat"
+    @confirm="confirmExport"
+    @cancel="showExportModal = false"
+  />
 </template>
 
 <style scoped>
