@@ -7,12 +7,16 @@ import TrackHeader from './TrackHeader.vue'
 import TrackRow from './TrackRow.vue'
 import Playhead from './Playhead.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import BaseIcon from '@/components/ui/BaseIcon.vue'
 import { useTimelineStore } from '@/stores/timeline'
 import { useProjectStore } from '@/stores/project'
+import { useUiStore } from '@/stores/ui'
 
 const timeline = useTimelineStore()
 const project = useProjectStore()
-const { orderedTracks, pixelsPerSecond, currentTime, isPlaying } = storeToRefs(timeline)
+const ui = useUiStore()
+const { orderedTracks, pixelsPerSecond, currentTime, isPlaying, hasClips } = storeToRefs(timeline)
+const { activeTool } = storeToRefs(ui)
 
 const scrollEl = ref<HTMLElement | null>(null)
 const HEADER_W = 168
@@ -50,16 +54,20 @@ function onGlobalDrop(e: DragEvent) {
   const rawStart = rect ? Math.max(0, (e.clientX - rect.left - HEADER_W + scrollLeft) / pixelsPerSecond.value) : 0
   const duration = asset.duration > 0 ? asset.duration : 5
   // Determina a trilha alvo pelo tipo do asset (para calcular o snap correto)
-  const type = asset.kind === 'audio' ? 'audio' : 'video'
-  const targetTrack = timeline.tracks.find((t) => t.type === type && !t.locked)
-  const snapTrackId = targetTrack?.id ?? ''
-  const start = timeline.snapStart(rawStart, '__new__', snapTrackId, duration, pixelsPerSecond.value)
-  // addClipFromAsset sem trackId explícito encontra/cria a trilha certa
+  const start = timeline.snapStart(
+    rawStart,
+    '__new__',
+    '',
+    duration,
+    pixelsPerSecond.value,
+  )
   timeline.addClipFromAsset(asset, undefined, start)
 }
 
 /* ---- Seek na régua ---- */
 function seekFromRuler(e: PointerEvent) {
+  if (!hasClips.value) return
+  timeline.beginUserSeek()
   const ruler = e.currentTarget as HTMLElement
   const scroll = scrollEl.value
 
@@ -71,6 +79,7 @@ function seekFromRuler(e: PointerEvent) {
   }
   move(e)
   const up = () => {
+    timeline.endUserSeek()
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', up)
   }
@@ -78,29 +87,54 @@ function seekFromRuler(e: PointerEvent) {
   window.addEventListener('pointerup', up)
 }
 
-/* ---- Ctrl + roda do mouse → zoom ---- */
+/* ---- Roda: Ctrl = zoom | Shift / horizontal = pan no tempo ---- */
 function onWheel(e: WheelEvent) {
-  if (!e.ctrlKey) return
-  e.preventDefault()
   const el = scrollEl.value
+  if (!el) return
 
-  // Guarda o tempo sob o cursor ANTES de alterar o zoom.
-  let timeCursor = 0
-  if (el) {
+  if (e.ctrlKey) {
+    e.preventDefault()
+    let timeCursor = 0
     const rect = el.getBoundingClientRect()
     const x = e.clientX - rect.left - HEADER_W + el.scrollLeft
     timeCursor = x / pixelsPerSecond.value
-  }
 
-  const factor = e.deltaY < 0 ? 1.14 : 1 / 1.14
-  timeline.zoomBy(factor)
+    const factor = e.deltaY < 0 ? 1.14 : 1 / 1.14
+    timeline.zoomBy(factor)
 
-  // Reposiciona o scroll para manter o tempo sob o cursor no mesmo pixel.
-  if (el) {
     const newX = timeCursor * pixelsPerSecond.value
-    const rect = el.getBoundingClientRect()
     el.scrollLeft = newX - (e.clientX - rect.left - HEADER_W)
+    return
   }
+
+  const horizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)
+  if (horizontal) {
+    e.preventDefault()
+    el.scrollLeft += e.deltaX !== 0 ? e.deltaX : e.deltaY
+  }
+}
+
+/* ---- Ferramenta mão: arrastar para mover a visão ---- */
+function onHandPanStart(e: PointerEvent) {
+  if (activeTool.value !== 'hand' || e.button !== 0) return
+  const el = scrollEl.value
+  if (!el) return
+  e.preventDefault()
+  const startX = e.clientX
+  const startY = e.clientY
+  const sl = el.scrollLeft
+  const st = el.scrollTop
+
+  const move = (ev: PointerEvent) => {
+    el.scrollLeft = sl - (ev.clientX - startX)
+    el.scrollTop = st - (ev.clientY - startY)
+  }
+  const up = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up)
 }
 
 onMounted(() => {
@@ -128,7 +162,11 @@ watch(currentTime, (t) => {
     <div
       ref="scrollEl"
       class="tl-scroll"
-      :class="{ 'global-drag-over': globalDragOver }"
+      :class="{
+        'global-drag-over': globalDragOver,
+        'tool-hand': activeTool === 'hand',
+      }"
+      @pointerdown="onHandPanStart"
       @dragover="onGlobalDragOver"
       @dragleave="globalDragOver = false"
       @drop.prevent="onGlobalDrop"
@@ -138,7 +176,11 @@ watch(currentTime, (t) => {
         <div class="corner">
           <span class="corner-label">Trilhas</span>
         </div>
-        <div class="ruler-cell" @pointerdown="seekFromRuler">
+        <div
+          class="ruler-cell"
+          :class="{ 'ruler-cell--empty': !hasClips }"
+          @pointerdown="seekFromRuler"
+        >
           <TimeRuler />
         </div>
 
@@ -148,6 +190,30 @@ watch(currentTime, (t) => {
           <div class="lane-cell"><TrackRow :track="track" /></div>
         </template>
 
+        <div class="header-cell add-row">
+          <div class="add-tracks">
+            <button
+              type="button"
+              class="add-btn video"
+              title="Adicionar trilha de vídeo"
+              @click="timeline.addTrack('video')"
+            >
+              <BaseIcon name="plus" :size="12" />
+              <span>Vídeo</span>
+            </button>
+            <button
+              type="button"
+              class="add-btn audio"
+              title="Adicionar trilha de áudio"
+              @click="timeline.addTrack('audio')"
+            >
+              <BaseIcon name="plus" :size="12" />
+              <span>Áudio</span>
+            </button>
+          </div>
+        </div>
+        <div class="lane-cell add-row-spacer" />
+
         <Playhead />
       </div>
 
@@ -156,7 +222,7 @@ watch(currentTime, (t) => {
         class="tl-empty"
         icon="film"
         title="Timeline vazia"
-        hint="Arraste mídia da biblioteca para uma trilha, ou use o + nos itens."
+        hint="Arraste mídia da biblioteca para criar uma trilha, ou use + Vídeo / + Áudio abaixo."
       />
     </div>
   </div>
@@ -177,6 +243,12 @@ watch(currentTime, (t) => {
 }
 .tl-scroll.global-drag-over {
   box-shadow: inset 0 0 0 2px var(--accent-ring);
+}
+.tl-scroll.tool-hand {
+  cursor: grab;
+}
+.tl-scroll.tool-hand:active {
+  cursor: grabbing;
 }
 .tl-grid {
   position: relative;
@@ -213,6 +285,9 @@ watch(currentTime, (t) => {
   border-bottom: 1px solid var(--border);
   cursor: col-resize;
 }
+.ruler-cell--empty {
+  cursor: default;
+}
 .header-cell {
   position: sticky;
   left: 0;
@@ -221,6 +296,55 @@ watch(currentTime, (t) => {
   background: var(--bg-2);
 }
 .lane-cell {
+  background: var(--bg-inset);
+}
+.add-row {
+  position: sticky;
+  left: 0;
+  z-index: 20;
+  padding: var(--sp-2);
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+}
+.add-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  color: var(--text-mid);
+  background: var(--bg-inset);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  transition:
+    color var(--dur-fast),
+    background var(--dur-fast),
+    box-shadow var(--dur-fast);
+}
+.add-btn:hover {
+  color: var(--text-hi);
+  background: var(--bg-3);
+}
+.add-btn.video:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--media-video) 50%, transparent);
+  color: var(--media-video);
+}
+.add-btn.audio:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--media-audio) 50%, transparent);
+  color: var(--media-audio);
+}
+.add-row-spacer {
+  height: 44px;
+  border-top: 1px solid var(--border);
   background: var(--bg-inset);
 }
 .tl-empty {

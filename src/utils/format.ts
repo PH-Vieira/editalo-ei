@@ -17,6 +17,17 @@ export function formatResolution(w?: number, h?: number): string {
   return `${w}×${h}`
 }
 
+/** Nome do arquivo a partir de um caminho Windows/Unix. */
+export function basename(path: string): string {
+  return path.split(/[/\\]/).pop() ?? path
+}
+
+/** Pasta pai de um caminho (para exibição resumida). */
+export function dirname(path: string): string {
+  const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return i > 0 ? path.slice(0, i) : path
+}
+
 export function kindLabel(kind: string): string {
   return (
     {

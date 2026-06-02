@@ -8,7 +8,7 @@ import { toTimecode } from '@/utils/time'
 
 const timeline = useTimelineStore()
 const project = useProjectStore()
-const { currentTime, isPlaying } = storeToRefs(timeline)
+const { currentTime, isPlaying, hasClips } = storeToRefs(timeline)
 
 const scrubbing = ref(false)
 const fps = computed(() => project.project.fps)
@@ -17,6 +17,7 @@ const progress = computed(() =>
 )
 
 function seek(e: MouseEvent) {
+  if (!hasClips.value || timeline.duration <= 0) return
   const bar = e.currentTarget as HTMLElement
   const rect = bar.getBoundingClientRect()
   const ratio = (e.clientX - rect.left) / rect.width
@@ -24,11 +25,14 @@ function seek(e: MouseEvent) {
 }
 
 function startScrub(e: MouseEvent) {
+  if (!hasClips.value) return
+  timeline.beginUserSeek()
   scrubbing.value = true
   seek(e)
   const move = (ev: MouseEvent) => seek(ev)
   const up = () => {
     scrubbing.value = false
+    timeline.endUserSeek()
     window.removeEventListener('mousemove', move)
     window.removeEventListener('mouseup', up)
   }
@@ -39,7 +43,11 @@ function startScrub(e: MouseEvent) {
 
 <template>
   <div class="controls">
-    <div class="scrubber" :class="{ active: scrubbing }" @mousedown="startScrub">
+    <div
+      class="scrubber"
+      :class="{ active: scrubbing, disabled: !hasClips }"
+      @mousedown="startScrub"
+    >
       <div class="track">
         <div class="fill" :style="{ width: `${progress}%` }" />
         <div class="knob" :style="{ left: `${progress}%` }" />
@@ -47,11 +55,12 @@ function startScrub(e: MouseEvent) {
     </div>
 
     <div class="transport">
-      <div class="tc">
+      <div v-if="hasClips" class="tc">
         <span class="tc-now mono">{{ toTimecode(currentTime, fps) }}</span>
         <span class="tc-sep">/</span>
         <span class="tc-total mono">{{ toTimecode(timeline.duration, fps) }}</span>
       </div>
+      <div v-else class="tc tc-placeholder" aria-hidden="true">—</div>
 
       <div class="center-btns">
         <IconButton icon="skip-start" label="Início (Home)" @click="timeline.setCurrentTime(0)" />
@@ -88,6 +97,15 @@ function startScrub(e: MouseEvent) {
 .scrubber {
   padding: 6px 0;
   cursor: pointer;
+}
+.scrubber.disabled {
+  cursor: default;
+  opacity: 0.45;
+  pointer-events: none;
+}
+.tc-placeholder {
+  color: var(--text-lo);
+  font-size: var(--fs-sm);
 }
 .track {
   position: relative;

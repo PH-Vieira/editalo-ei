@@ -1,8 +1,15 @@
 import { defineStore } from 'pinia'
-import type { Asset, Clip, Track, TrackType } from '@/types'
+import type { Asset, AssetKind, Clip, Track, TrackType } from '@/types'
 import { clamp } from '@/utils/time'
 import { uid } from '@/utils/id'
+import {
+  canPlaceClipOnTrack,
+  canPlaceOnTrack,
+  incompatibleTrackMessage,
+  trackTypeForKind,
+} from '@/utils/trackCompat'
 import { useUiStore } from './ui'
+import { invalidateClipMediaCaches } from '@/utils/clipMediaCache'
 
 export const MIN_PPS = 14
 export const MAX_PPS = 320
@@ -20,8 +27,11 @@ interface TimelineState {
   selectedClipId: string | null
   currentTime: number
   isPlaying: boolean
+  /** Enquanto o usuário arrasta o playhead / régua / scrubber — o preview não sobrescreve o tempo. */
+  isUserSeeking: boolean
   pixelsPerSecond: number
   tailPadding: number
+  _clipboard: Clip | null
   _undo: HistorySnap[]
   _redo: HistorySnap[]
 }
@@ -32,16 +42,15 @@ function deepClone<T>(v: T): T {
 
 export const useTimelineStore = defineStore('timeline', {
   state: (): TimelineState => ({
-    tracks: [
-      { id: 'tr_v1_init', name: 'Vídeo 1', type: 'video', index: 0,    muted: false, locked: false, hidden: false, height: 64 },
-      { id: 'tr_a1_init', name: 'Áudio 1', type: 'audio', index: 1000, muted: false, locked: false, hidden: false, height: 56 },
-    ],
+    tracks: [],
     clips: [],
     selectedClipId: null,
     currentTime: 0,
     isPlaying: false,
+    isUserSeeking: false,
     pixelsPerSecond: DEFAULT_PPS,
     tailPadding: 4,
+    _clipboard: null,
     _undo: [],
     _redo: [],
   }),
@@ -65,7 +74,12 @@ export const useTimelineStore = defineStore('timeline', {
     contentEnd(state): number {
       return state.clips.reduce((max, c) => Math.max(max, c.start + c.duration), 0)
     },
+    hasClips(state): boolean {
+      return state.clips.length > 0
+    },
+    /** Duração visível: 0 sem clipes; com mídia, fim do conteúdo + margem para editar. */
     duration(): number {
+      if (!this.hasClips) return 0
       return this.contentEnd + this.tailPadding
     },
     secondsToPx(state) {
@@ -96,6 +110,7 @@ export const useTimelineStore = defineStore('timeline', {
       this._undo.push(snap)
       if (this._undo.length > MAX_HISTORY) this._undo.shift()
       this._redo = []
+      void import('@/stores/project').then(({ useProjectStore }) => useProjectStore().touch())
     },
 
     undo() {
@@ -105,6 +120,7 @@ export const useTimelineStore = defineStore('timeline', {
       this.clips = snap.clips
       this.tracks = snap.tracks
       if (!this.clips.find((c) => c.id === this.selectedClipId)) this.selectedClipId = null
+      void import('@/stores/project').then(({ useProjectStore }) => useProjectStore().touch())
       useUiStore().notify('Desfeito', 'info')
     },
 
@@ -115,6 +131,7 @@ export const useTimelineStore = defineStore('timeline', {
       this.clips = snap.clips
       this.tracks = snap.tracks
       if (!this.clips.find((c) => c.id === this.selectedClipId)) this.selectedClipId = null
+      void import('@/stores/project').then(({ useProjectStore }) => useProjectStore().touch())
       useUiStore().notify('Refeito', 'info')
     },
 
@@ -127,19 +144,133 @@ export const useTimelineStore = defineStore('timeline', {
     },
 
     /* ------------------------------------------------------------------ */
+    /* Área de transferência (clipes)                                     */
+    /* ------------------------------------------------------------------ */
+
+    copySelectedClip() {
+      const clip = this.selectedClip
+      if (!clip) {
+        useUiStore().notify('Selecione um clipe para copiar', 'info')
+        return false
+      }
+      this._clipboard = deepClone(clip)
+      return true
+    },
+
+    pasteClipboard() {
+      if (!this._clipboard) {
+        useUiStore().notify('Nada na área de transferência', 'info')
+        return
+      }
+      const src = this._clipboard
+      const ui = useUiStore()
+      this.snapshot()
+
+      const type: TrackType = src.kind === 'audio' ? 'audio' : 'video'
+      let track = this.tracks.find((t) => t.id === src.trackId && !t.locked)
+      if (track && !canPlaceClipOnTrack(src, track)) track = undefined
+      if (!track) {
+        track =
+          this.tracks.find((t) => t.type === type && !t.locked)
+          ?? this._createTrack(type)
+      }
+
+      let start = this.snapStart(
+        this.currentTime,
+        '__new__',
+        track.id,
+        src.duration,
+        this.pixelsPerSecond,
+      )
+      const others = this.clipsByTrack(track.id)
+      const overlap = others.some(
+        (c) => start < c.start + c.duration - 0.01 && start + src.duration > c.start + 0.01,
+      )
+      if (overlap) {
+        start = others.reduce((max, c) => Math.max(max, c.start + c.duration), 0)
+      }
+
+      const clip: Clip = {
+        ...deepClone(src),
+        id: uid('cl'),
+        trackId: track.id,
+        start,
+        outPoint: src.inPoint + src.duration,
+      }
+      this.clips.push(clip)
+      this.selectClip(clip.id)
+      ui.notify(`"${clip.name}" colado`, 'info')
+    },
+
+    duplicateSelectedClip() {
+      const src = this.selectedClip
+      if (!src) {
+        useUiStore().notify('Selecione um clipe para duplicar', 'info')
+        return
+      }
+      this.snapshot()
+      const ui = useUiStore()
+      const clipType: TrackType = src.kind === 'audio' ? 'audio' : 'video'
+      const track =
+        this.tracks.find((t) => t.id === src.trackId && !t.locked)
+        ?? this.tracks.find((t) => t.type === clipType && !t.locked)
+        ?? this._createTrack(clipType)
+
+      let start = this.snapStart(
+        src.start + src.duration,
+        '__new__',
+        track.id,
+        src.duration,
+        this.pixelsPerSecond,
+      )
+
+      const clip: Clip = {
+        ...deepClone(src),
+        id: uid('cl'),
+        trackId: track.id,
+        start,
+      }
+      this.clips.push(clip)
+      this.selectClip(clip.id)
+      ui.notify(`"${clip.name}" duplicado`, 'info')
+    },
+
+    /* ------------------------------------------------------------------ */
     /* Playhead / reprodução                                              */
     /* ------------------------------------------------------------------ */
 
     setCurrentTime(t: number) {
+      if (!this.hasClips) {
+        this.currentTime = 0
+        return
+      }
       this.currentTime = clamp(t, 0, this.duration)
     },
+    beginUserSeek() {
+      this.isUserSeeking = true
+    },
+    endUserSeek() {
+      this.isUserSeeking = false
+    },
+    /** Busca pontual (teclado etc.) durante reprodução sem travar o playhead. */
+    userSeekTo(t: number) {
+      if (!this.hasClips) return
+      this.beginUserSeek()
+      this.setCurrentTime(t)
+      requestAnimationFrame(() => this.endUserSeek())
+    },
     play() {
+      if (!this.hasClips) return
       if (this.currentTime >= this.contentEnd) this.currentTime = 0
       this.isPlaying = true
     },
     pause() { this.isPlaying = false },
     togglePlay() { this.isPlaying ? this.pause() : this.play() },
-    stop() { this.isPlaying = false; this.currentTime = 0 },
+    stop() {
+      this.isPlaying = false
+      this.isUserSeeking = false
+      this.currentTime = 0
+    },
 
     /* ------------------------------------------------------------------ */
     /* Zoom                                                                */
@@ -171,12 +302,72 @@ export const useTimelineStore = defineStore('timeline', {
       return this._createTrack(type)
     },
 
-    _createTrack(type: TrackType): Track {
+    /** Cria uma trilha vazia manualmente (com undo). */
+    addTrack(type: TrackType): Track {
+      this.snapshot()
+      const track = this._createTrack(type, { userCreated: true })
+      useUiStore().notify(`${track.name} adicionada`, 'info')
+      return track
+    },
+
+    renameTrack(id: string, name: string) {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      const track = this.tracks.find((t) => t.id === id)
+      if (!track || track.name === trimmed) return
+      this.snapshot()
+      track.name = trimmed
+    },
+
+    /** Remove trilha e todos os clipes nela. */
+    removeTrack(id: string) {
+      const track = this.tracks.find((t) => t.id === id)
+      if (!track) return
+      const ui = useUiStore()
+      if (track.locked) {
+        ui.notify('Destrave a trilha antes de remover', 'warning')
+        return
+      }
+      this.snapshot()
+      this.clips = this.clips.filter((c) => c.trackId !== id)
+      if (this.selectedClipId && !this.clips.some((c) => c.id === this.selectedClipId)) {
+        this.selectedClipId = null
+      }
+      this.tracks = this.tracks.filter((t) => t.id !== id)
+      this._reindexTracks(track.type)
+      this._syncTimeAfterClipsChange()
+      ui.notify(`"${track.name}" removida`, 'info')
+    },
+
+    /** Sobe a trilha na pilha do mesmo tipo (índice menor = mais acima). */
+    moveTrackUp(id: string) {
+      this._moveTrackBy(id, -1)
+    },
+
+    /** Desce a trilha na pilha do mesmo tipo. */
+    moveTrackDown(id: string) {
+      this._moveTrackBy(id, 1)
+    },
+
+    _moveTrackBy(id: string, delta: -1 | 1) {
+      const track = this.tracks.find((t) => t.id === id)
+      if (!track) return
+      const ordered = this.tracks
+        .filter((t) => t.type === track.type)
+        .sort((a, b) => a.index - b.index)
+      const idx = ordered.findIndex((t) => t.id === id)
+      const target = ordered[idx + delta]
+      if (!track || !target) return
+      this.snapshot()
+      const tmp = track.index
+      track.index = target.index
+      target.index = tmp
+    },
+
+    _createTrack(type: TrackType, opts?: { userCreated?: boolean }): Track {
       const count = this.tracks.filter((t) => t.type === type).length + 1
-      // index: vídeos recebem índices pares baixos, áudios altos — orderedTracks reordena pelo tipo.
-      const index = type === 'video'
-        ? this.tracks.filter((t) => t.type === 'video').length
-        : 1000 + this.tracks.filter((t) => t.type === 'audio').length
+      const sameType = this.tracks.filter((t) => t.type === type)
+      const index = sameType.length > 0 ? Math.max(...sameType.map((t) => t.index)) + 1 : 0
       const track: Track = {
         id: uid('tr'),
         name: `${type === 'video' ? 'Vídeo' : 'Áudio'} ${count}`,
@@ -186,22 +377,41 @@ export const useTimelineStore = defineStore('timeline', {
         locked: false,
         hidden: false,
         height: type === 'video' ? 64 : 56,
+        userCreated: opts?.userCreated ?? false,
       }
       this.tracks.push(track)
       return track
     },
 
+    _reindexTracks(type: TrackType) {
+      const list = this.tracks
+        .filter((t) => t.type === type)
+        .sort((a, b) => a.index - b.index)
+      list.forEach((t, i) => {
+        t.index = i
+      })
+    },
+
+    canPlaceClipOnTrack(kind: AssetKind, track: Track): boolean {
+      return canPlaceOnTrack(kind, track)
+    },
+
     /** Adiciona clipe a partir de um asset; cria trilha automaticamente se necessário. */
-    addClipFromAsset(asset: Asset, trackId?: string, start?: number): Clip {
-      this.snapshot()
+    addClipFromAsset(asset: Asset, trackId?: string, start?: number): Clip | null {
       const ui = useUiStore()
-      const type: TrackType = asset.kind === 'audio' ? 'audio' : 'video'
+      const type = trackTypeForKind(asset.kind)
       const duration = asset.duration > 0 ? asset.duration : 5
 
       let track: Track | undefined
       if (trackId) {
         track = this.tracks.find((t) => t.id === trackId)
+        if (track && !canPlaceOnTrack(asset.kind, track)) {
+          ui.notify(incompatibleTrackMessage(asset.kind, track.name), 'warning')
+          return null
+        }
       }
+
+      this.snapshot()
 
       if (!track) {
         if (start !== undefined) {
@@ -249,21 +459,39 @@ export const useTimelineStore = defineStore('timeline', {
       this.snapshot()
       this.clips = this.clips.filter((c) => c.id !== id)
       if (this.selectedClipId === id) this.selectedClipId = null
-      // Remove trilhas que ficaram vazias (exceto se só há 1 de cada tipo).
       this._pruneEmptyTracks()
+      this._syncTimeAfterClipsChange()
     },
 
-    /** Remove trilhas vazias além do mínimo de 1 por tipo. */
+    /** Remove todos os clipes que usam um asset da biblioteca. */
+    removeClipsForAsset(assetId: string) {
+      if (!this.clips.some((c) => c.assetId === assetId)) return
+      this.snapshot()
+      this.clips = this.clips.filter((c) => c.assetId !== assetId)
+      if (this.selectedClipId && !this.clips.find((c) => c.id === this.selectedClipId)) {
+        this.selectedClipId = null
+      }
+      this._pruneEmptyTracks()
+      this._syncTimeAfterClipsChange()
+    },
+
+    _syncTimeAfterClipsChange() {
+      if (!this.hasClips) {
+        this.currentTime = 0
+        this.isPlaying = false
+        return
+      }
+      if (this.currentTime > this.contentEnd) this.currentTime = this.contentEnd
+    },
+
+    /** Remove trilhas vazias criadas automaticamente ao importar mídia. */
     _pruneEmptyTracks() {
       const occupied = new Set(this.clips.map((c) => c.trackId))
       for (const type of ['video', 'audio'] as TrackType[]) {
-        const byType = this.tracks.filter((t) => t.type === type).sort((a, b) => a.index - b.index)
-        const emptyTracks = byType.filter((t) => !occupied.has(t.id))
-        // Mantém pelo menos 1 vazia como ponto de queda; remove o restante
-        const occupiedCount = byType.length - emptyTracks.length
-        const keepEmpty = Math.max(0, 1 - occupiedCount)
-        const toRemove = new Set(emptyTracks.slice(keepEmpty).map((t) => t.id))
-        this.tracks = this.tracks.filter((t) => !toRemove.has(t.id))
+        this.tracks = this.tracks.filter(
+          (t) => t.type !== type || t.userCreated || occupied.has(t.id),
+        )
+        this._reindexTracks(type)
       }
     },
 
@@ -290,20 +518,44 @@ export const useTimelineStore = defineStore('timeline', {
       clip.outPoint = clip.inPoint + local
       this.clips.push(right)
       this.selectClip(right.id)
+      this._invalidateClipMediaCache(clip)
+      this._invalidateClipMediaCache(right)
       ui.notify('Clipe dividido', 'info')
+    },
+
+    _invalidateClipMediaCache(clip: Clip) {
+      if (!clip.assetId) return
+      void import('@/stores/project').then(({ useProjectStore }) => {
+        const asset = useProjectStore().assets.find((a) => a.id === clip.assetId)
+        if (asset?.src) invalidateClipMediaCaches(asset.src)
+      })
     },
 
     /** Chamado pelo drag — o snapshot deve ter sido tirado ANTES no componente. */
     moveClip(id: string, start: number, trackId?: string) {
       const clip = this.clips.find((c) => c.id === id)
       if (!clip) return
-      clip.start = Math.max(0, start)
-      if (trackId) clip.trackId = trackId
+
+      const targetId = trackId ?? clip.trackId
+      const track = this.tracks.find((t) => t.id === targetId)
+      if (!track || !canPlaceClipOnTrack(clip, track)) return
+
+      const s = this.snapStart(
+        Math.max(0, start),
+        id,
+        targetId,
+        clip.duration,
+        this.pixelsPerSecond,
+      )
+      clip.start = s
+      clip.trackId = targetId
     },
 
     updateClip(id: string, patch: Partial<Clip>) {
       const clip = this.clips.find((c) => c.id === id)
-      if (clip) Object.assign(clip, patch)
+      if (!clip) return
+      Object.assign(clip, patch)
+      void import('@/stores/project').then(({ useProjectStore }) => useProjectStore().touch())
     },
 
     toggleTrackFlag(id: string, flag: 'muted' | 'locked' | 'hidden') {
@@ -318,10 +570,18 @@ export const useTimelineStore = defineStore('timeline', {
       this.isPlaying = false
       this._undo = []
       this._redo = []
-      this.tracks = [
-        { id: uid('tr'), name: 'Vídeo 1', type: 'video', index: 0,    muted: false, locked: false, hidden: false, height: 64 },
-        { id: uid('tr'), name: 'Áudio 1', type: 'audio', index: 1000, muted: false, locked: false, hidden: false, height: 56 },
-      ]
+      this.tracks = []
+    },
+
+    /** Restaura timeline a partir de um arquivo .elei. */
+    loadState(tracks: Track[], clips: Clip[]) {
+      this.tracks = deepClone(tracks)
+      this.clips = deepClone(clips)
+      this.selectedClipId = null
+      this.currentTime = 0
+      this.isPlaying = false
+      this._undo = []
+      this._redo = []
     },
 
     /* ------------------------------------------------------------------ */

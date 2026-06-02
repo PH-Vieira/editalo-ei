@@ -2,6 +2,9 @@
 //! Suporta exportação em MP4 (H.264+AAC), MP3 (áudio) e GIF animado.
 
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::path::Path;
 use tauri::api::process::{Command, CommandEvent};
 
 #[derive(Debug, Serialize)]
@@ -52,9 +55,101 @@ fn run_ffprobe(args: &[&str]) -> Result<String, String> {
         .output()
         .map_err(|e| format!("falha ao executar ffprobe: {e}"))?;
     if !output.status.success() {
-        return Err(format!("ffprobe falhou: {}", output.stderr));
+        let stderr = output.stderr.trim();
+        let stdout = output.stdout.trim();
+        let detail = if !stderr.is_empty() {
+            stderr.to_string()
+        } else if !stdout.is_empty() {
+            stdout.to_string()
+        } else {
+            format!("código {}", output.status.code().unwrap_or(-1))
+        };
+        return Err(format!("ffprobe falhou: {detail}"));
     }
     Ok(output.stdout)
+}
+
+/// ffprobe com `-i` explícito; GIFs tentam de novo com `-f gif`.
+fn run_ffprobe_media(path: &str) -> Result<String, String> {
+    let base = [
+        "-v",
+        "error",
+        "-probesize",
+        "50000000",
+        "-analyzeduration",
+        "50000000",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        "-i",
+        path,
+    ];
+    match run_ffprobe(&base) {
+        Ok(json) => Ok(json),
+        Err(primary) if is_gif_path(path) => {
+            let gif_args = [
+                "-v",
+                "error",
+                "-probesize",
+                "50000000",
+                "-analyzeduration",
+                "50000000",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                "-f",
+                "gif",
+                "-i",
+                path,
+            ];
+            run_ffprobe(&gif_args).map_err(|fallback| format!("{primary}; gif: {fallback}"))
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn parse_probe_json(path: &str, json: &str) -> Result<MediaProbe, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("JSON inválido: {e}"))?;
+
+    let streams = v["streams"].as_array().cloned().unwrap_or_default();
+    let video = streams.iter().find(|s| s["codec_type"] == "video");
+    let audio = streams.iter().find(|s| s["codec_type"] == "audio");
+
+    let duration = v["format"]["duration"]
+        .as_str()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let (width, height, fps) = match video {
+        Some(vs) => (
+            vs["width"].as_u64().unwrap_or(0) as u32,
+            vs["height"].as_u64().unwrap_or(0) as u32,
+            eval_rate(vs["avg_frame_rate"].as_str().unwrap_or("0/1")),
+        ),
+        None => (0, 0, 0.0),
+    };
+    let kind = if is_image_ext(path) && !path.to_lowercase().ends_with(".gif") {
+        "image"
+    } else if video.is_some() {
+        "video"
+    } else if audio.is_some() {
+        "audio"
+    } else if is_image_ext(path) {
+        "image"
+    } else {
+        "video"
+    };
+
+    Ok(MediaProbe {
+        path: path.into(),
+        kind: kind.into(),
+        duration,
+        width,
+        height,
+        fps,
+    })
 }
 
 fn eval_rate(rate: &str) -> f64 {
@@ -72,6 +167,156 @@ fn is_image_ext(path: &str) -> bool {
         .iter().any(|e| lower.ends_with(e))
 }
 
+fn is_gif_path(path: &str) -> bool {
+    path.to_lowercase().ends_with(".gif")
+}
+
+/// Versão da receita de conversão — incrementar invalida caches antigos.
+const GIF_PROXY_RECIPE: u64 = 2;
+
+fn import_cache_key(path: &str) -> Result<u64, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("metadata: {e}"))?;
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut h = DefaultHasher::new();
+    path.hash(&mut h);
+    modified.hash(&mut h);
+    meta.len().hash(&mut h);
+    GIF_PROXY_RECIPE.hash(&mut h);
+    Ok(h.finish())
+}
+
+/// Metadados básicos de um GIF para decidir se converte e por quanto tempo.
+struct GifProbe {
+    animated: bool,
+}
+
+fn probe_gif(path: &str) -> Result<GifProbe, String> {
+    let json = run_ffprobe_media(path)?;
+    let v: serde_json::Value =
+        serde_json::from_str(&json).map_err(|e| format!("JSON inválido: {e}"))?;
+
+    let duration = v["format"]["duration"]
+        .as_str()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    let mut animated = duration > 0.1;
+
+    if let Some(streams) = v["streams"].as_array() {
+        if let Some(vs) = streams.iter().find(|s| s["codec_type"] == "video") {
+            if let Some(n) = vs["nb_frames"].as_str().and_then(|s| s.parse::<u64>().ok()) {
+                animated = n > 1;
+            }
+            if duration <= 0.0 {
+                if let Some(d) = vs["duration"].as_str().and_then(|s| s.parse::<f64>().ok()) {
+                    if d > 0.1 {
+                        animated = true;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(GifProbe { animated })
+}
+
+fn cache_file_valid(path: &Path) -> bool {
+    path.is_file() && path.metadata().map(|m| m.len() > 512).unwrap_or(false)
+}
+
+/// MP4 em cache precisa ser legível pelo ffprobe (evita "moov atom not found").
+fn mp4_cache_valid(path: &Path) -> bool {
+    if !cache_file_valid(path) {
+        return false;
+    }
+    let path_str = path.to_string_lossy();
+    run_ffprobe_media(path_str.as_ref()).is_ok()
+}
+
+fn convert_gif_to_mp4(source: &str, dest: &Path) -> Result<(), String> {
+    if dest.is_file() {
+        let _ = std::fs::remove_file(dest);
+    }
+    let dest_str = dest.to_string_lossy();
+
+    // Passagem 1 — escala par + H.264 (sem -t nem faststart: mais confiável no Windows).
+    let primary = run_ffmpeg_sync(&[
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ignore_loop",
+        "1",
+        "-i",
+        source,
+        "-vf",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos,format=yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-an",
+        &dest_str,
+    ]);
+
+    if primary.is_ok() && mp4_cache_valid(dest) {
+        return Ok(());
+    }
+
+    let _ = std::fs::remove_file(dest);
+
+    // Passagem 2 — receita mínima caso a primeira falhe ou gere arquivo inválido.
+    run_ffmpeg_sync(&[
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ignore_loop",
+        "1",
+        "-i",
+        source,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-pix_fmt",
+        "yuv420p",
+        "-an",
+        &dest_str,
+    ])
+}
+
+fn ensure_gif_proxy(source: &str, out: &Path) -> Result<(), String> {
+    if mp4_cache_valid(out) {
+        return Ok(());
+    }
+    if out.is_file() {
+        let _ = std::fs::remove_file(out);
+    }
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("cache: {e}"))?;
+    }
+    convert_gif_to_mp4(source, out)?;
+    if !mp4_cache_valid(out) {
+        let _ = std::fs::remove_file(out);
+        return Err(
+            "ffmpeg gerou um MP4 inválido para o GIF (moov atom ausente). \
+             Tente remover o cache em %LOCALAPPDATA%/*/cache/gif_proxy e importar de novo."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 fn has_audio(path: &str) -> bool {
     run_ffprobe(&["-v","quiet","-select_streams","a","-show_entries","stream=index","-of","csv=p=0",path])
         .map(|out| !out.trim().is_empty())
@@ -84,25 +329,34 @@ fn has_audio(path: &str) -> bool {
 
 #[tauri::command]
 pub async fn probe_media(path: String) -> Result<MediaProbe, String> {
-    let json = run_ffprobe(&["-v","quiet","-print_format","json","-show_format","-show_streams",&path])?;
-    let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("JSON inválido: {e}"))?;
+    let json = run_ffprobe_media(&path)?;
+    parse_probe_json(&path, &json)
+}
 
-    let streams = v["streams"].as_array().cloned().unwrap_or_default();
-    let video = streams.iter().find(|s| s["codec_type"] == "video");
-    let audio = streams.iter().find(|s| s["codec_type"] == "audio");
+#[tauri::command]
+pub async fn prepare_import_media(path: String) -> Result<MediaProbe, String> {
+    if !Path::new(&path).is_file() {
+        return Err(format!("arquivo não encontrado: {path}"));
+    }
 
-    let duration = v["format"]["duration"].as_str().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-    let (width, height, fps) = match video {
-        Some(vs) => (
-            vs["width"].as_u64().unwrap_or(0) as u32,
-            vs["height"].as_u64().unwrap_or(0) as u32,
-            eval_rate(vs["avg_frame_rate"].as_str().unwrap_or("0/1")),
-        ),
-        None => (0, 0, 0.0),
-    };
-    let kind = if is_image_ext(&path) { "image" } else if video.is_some() { "video" } else if audio.is_some() { "audio" } else { "video" };
+    if is_gif_path(&path) {
+        let gif_meta = probe_gif(&path).ok();
+        // Se o ffprobe falhar, ainda tentamos converter — o ffmpeg lê GIF diretamente.
+        let should_convert = gif_meta.as_ref().map(|g| g.animated).unwrap_or(true);
 
-    Ok(MediaProbe { path, kind: kind.into(), duration, width, height, fps })
+        if should_convert {
+            let cache_root = tauri::api::path::cache_dir().ok_or("pasta de cache indisponível")?;
+            let key = import_cache_key(&path)?;
+            let out = cache_root.join("gif_proxy").join(format!("{:016x}.mp4", key));
+
+            ensure_gif_proxy(&path, &out)?;
+
+            let out_path = out.to_string_lossy().into_owned();
+            return probe_media(out_path).await;
+        }
+    }
+
+    probe_media(path).await
 }
 
 /* ------------------------------------------------------------------ */
@@ -265,4 +519,286 @@ pub async fn export_video(window: tauri::Window, request: ExportRequest) -> Resu
 
     let _ = window.emit("export://progress", ExportProgress { progress: 1.0, done: true, output: Some(request.output_path.clone()) });
     Ok(request.output_path)
+}
+
+/* ------------------------------------------------------------------ */
+/* Miniaturas da timeline (filmstrip)                                  */
+/* ------------------------------------------------------------------ */
+
+#[derive(Debug, Deserialize)]
+pub struct ThumbnailRequest {
+    pub path: String,
+    #[serde(rename = "inPoint")]
+    pub in_point: f64,
+    pub duration: f64,
+    pub count: u32,
+    pub width: u32,
+}
+
+fn thumb_cache_key(path: &str, in_point: f64, duration: f64, count: u32, width: u32) -> u64 {
+    let mut h = DefaultHasher::new();
+    path.hash(&mut h);
+    in_point.to_bits().hash(&mut h);
+    duration.to_bits().hash(&mut h);
+    count.hash(&mut h);
+    width.hash(&mut h);
+    h.finish()
+}
+
+fn run_ffmpeg_sync(args: &[&str]) -> Result<(), String> {
+    let output = Command::new_sidecar("ffmpeg")
+        .map_err(|e| format!("ffmpeg sidecar indisponível: {e}"))?
+        .args(args)
+        .output()
+        .map_err(|e| format!("falha ao executar ffmpeg: {e}"))?;
+    if !output.status.success() {
+        let stderr = output.stderr.trim();
+        let detail = if stderr.is_empty() {
+            format!("código {}", output.status.code().unwrap_or(-1))
+        } else {
+            stderr.to_string()
+        };
+        return Err(format!("ffmpeg falhou: {detail}"));
+    }
+    Ok(())
+}
+
+fn collect_cached_thumbs(dir: &Path, count: u32) -> Option<Vec<String>> {
+    let paths: Vec<String> = (0..count)
+        .filter_map(|i| {
+            let p = dir.join(format!("thumb_{:03}.jpg", i + 1));
+            if p.is_file() {
+                Some(p.to_string_lossy().into_owned())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if paths.len() == count as usize {
+        Some(paths)
+    } else {
+        None
+    }
+}
+
+/// Extrai N frames JPEG do trecho [inPoint, inPoint+duration] para a filmstrip do clipe.
+#[tauri::command]
+pub fn extract_thumbnails(request: ThumbnailRequest) -> Result<Vec<String>, String> {
+    let count = request.count.clamp(1, 16);
+    let width = request.width.clamp(48, 320);
+    let duration = request.duration.max(0.05);
+    let in_point = request.in_point.max(0.0);
+
+    if !Path::new(&request.path).is_file() {
+        return Err(format!("arquivo não encontrado: {}", request.path));
+    }
+
+    let cache_root = tauri::api::path::cache_dir().ok_or("pasta de cache indisponível")?;
+    let key = thumb_cache_key(&request.path, in_point, duration, count, width);
+    let dir = cache_root.join("filmstrip").join(format!("{:016x}", key));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cache: {e}"))?;
+
+    if let Some(paths) = collect_cached_thumbs(&dir, count) {
+        return Ok(paths);
+    }
+
+    // Limpa saídas parciais de execuções anteriores.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+
+    let scale_vf = format!("scale={width}:-2:flags=fast_bilinear");
+
+    if is_image_ext(&request.path) {
+        let out = dir.join("thumb_001.jpg");
+        let out_str = out.to_string_lossy();
+        run_ffmpeg_sync(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            &request.path,
+            "-vf",
+            &scale_vf,
+            "-frames:v",
+            "1",
+            "-q:v",
+            "4",
+            &out_str,
+        ])?;
+        let mut paths = Vec::with_capacity(count as usize);
+        let path = out.to_string_lossy().into_owned();
+        for _ in 0..count {
+            paths.push(path.clone());
+        }
+        return Ok(paths);
+    }
+
+    // Um frame por instante — mais confiável que fps=count/duration no Windows.
+    let step = duration / f64::from(count);
+    for i in 0..count {
+        let t = in_point + (f64::from(i) + 0.5) * step;
+        let out = dir.join(format!("thumb_{:03}.jpg", i + 1));
+        let t_s = format!("{t:.3}");
+        let out_s = out.to_string_lossy();
+        run_ffmpeg_sync(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            &t_s,
+            "-i",
+            &request.path,
+            "-vframes",
+            "1",
+            "-vf",
+            &scale_vf,
+            "-q:v",
+            "4",
+            &out_s,
+        ])?;
+    }
+
+    collect_cached_thumbs(&dir, count).ok_or_else(|| "ffmpeg não gerou as miniaturas esperadas".into())
+}
+
+/* ------------------------------------------------------------------ */
+/* Forma de onda (áudio)                                               */
+/* ------------------------------------------------------------------ */
+
+#[derive(Debug, Deserialize)]
+pub struct WaveformRequest {
+    pub path: String,
+    #[serde(rename = "inPoint")]
+    pub in_point: f64,
+    pub duration: f64,
+    pub bins: u32,
+}
+
+fn waveform_cache_key(path: &str, in_point: f64, duration: f64, bins: u32) -> u64 {
+    let mut h = DefaultHasher::new();
+    path.hash(&mut h);
+    in_point.to_bits().hash(&mut h);
+    duration.to_bits().hash(&mut h);
+    bins.hash(&mut h);
+    h.finish()
+}
+
+fn bucket_peaks(samples: &[f32], bins: u32) -> Vec<f32> {
+    let bins = bins.max(1) as usize;
+    if samples.is_empty() {
+        return vec![0.12; bins];
+    }
+    let per = (samples.len() as f64 / bins as f64).max(1.0);
+    let mut peaks = Vec::with_capacity(bins);
+    let mut max_global = 0.0001f32;
+    for b in 0..bins {
+        let start = (b as f64 * per) as usize;
+        let end = ((b as f64 + 1.0) * per) as usize;
+        let end = end.min(samples.len()).max(start + 1);
+        let peak = samples[start..end]
+            .iter()
+            .map(|s| s.abs())
+            .fold(0.0f32, f32::max);
+        peaks.push(peak);
+        max_global = max_global.max(peak);
+    }
+    peaks
+        .into_iter()
+        .map(|p| (p / max_global).clamp(0.08, 1.0))
+        .collect()
+}
+
+/// Picos normalizados (0–1) do áudio no trecho visível do clipe.
+#[tauri::command]
+pub fn extract_waveform(request: WaveformRequest) -> Result<Vec<f32>, String> {
+    let bins = request.bins.clamp(48, 512);
+    let duration = request.duration.max(0.05);
+    let in_point = request.in_point.max(0.0);
+
+    if !Path::new(&request.path).is_file() {
+        return Err(format!("arquivo não encontrado: {}", request.path));
+    }
+
+    let cache_root = tauri::api::path::cache_dir().ok_or("pasta de cache indisponível")?;
+    let key = waveform_cache_key(&request.path, in_point, duration, bins);
+    let dir = cache_root.join("waveform").join(format!("{:016x}", key));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cache: {e}"))?;
+
+    let peaks_file = dir.join("peaks.json");
+    if peaks_file.is_file() {
+        let raw = std::fs::read_to_string(&peaks_file).map_err(|e| e.to_string())?;
+        if let Ok(peaks) = serde_json::from_str::<Vec<f32>>(&raw) {
+            if peaks.len() == bins as usize {
+                return Ok(peaks);
+            }
+        }
+    }
+
+    let raw_path = dir.join("audio.f32le");
+    let raw_str = raw_path.to_string_lossy();
+    let in_s = format!("{in_point:.3}");
+    let dur_s = format!("{duration:.3}");
+
+    // Vídeo: extrai faixa de áudio; arquivo só-áudio: mesmo comando.
+    if run_ffmpeg_sync(&[
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ss",
+        &in_s,
+        "-i",
+        &request.path,
+        "-t",
+        &dur_s,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "8000",
+        "-f",
+        "f32le",
+        &raw_str,
+    ])
+    .is_err()
+    {
+        return Ok(vec![0.12; bins as usize]);
+    }
+
+    let bytes = std::fs::read(&raw_path).unwrap_or_default();
+    let samples: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+
+    let peaks = bucket_peaks(&samples, bins);
+    let json = serde_json::to_string(&peaks).map_err(|e| e.to_string())?;
+    let _ = std::fs::write(&peaks_file, json);
+    let _ = std::fs::remove_file(&raw_path);
+    Ok(peaks)
+}
+
+/* ------------------------------------------------------------------ */
+/* Persistência de projeto (.elei)                                     */
+/* ------------------------------------------------------------------ */
+
+#[tauri::command]
+pub fn save_project_file(path: String, content: String) -> Result<(), String> {
+    let path_ref = std::path::Path::new(&path);
+    if let Some(parent) = path_ref.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("não foi possível criar a pasta: {e}"))?;
+        }
+    }
+    std::fs::write(path_ref, content).map_err(|e| format!("não foi possível gravar o arquivo: {e}"))
+}
+
+#[tauri::command]
+pub fn load_project_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("não foi possível ler o arquivo: {e}"))
 }

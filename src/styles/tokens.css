@@ -43,9 +43,10 @@
   --success: #46c08a;
 
   /* ---- Tipografia ---- */
-  --font-display: 'Clash Display', 'Satoshi', system-ui, sans-serif;
+  --font-display: 'Switzer', 'Satoshi', system-ui, sans-serif;
   --font-ui: 'Satoshi', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+  --tracking-display: 0.01em;
 
   --fs-2xs: 10px;
   --fs-xs: 11px;
@@ -88,6 +89,7 @@
   /* ---- Layout (alturas/larguras das regiões) ---- */
   --topbar-h: 52px;
   --statusbar-h: 28px;
+  --window-radius: 10px;
   --sidebar-w: 264px;
   --inspector-w: 300px;
   --track-header-w: 168px;

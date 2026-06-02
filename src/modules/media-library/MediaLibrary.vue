@@ -13,6 +13,7 @@ const project = useProjectStore()
 const timeline = useTimelineStore()
 const ui = useUiStore()
 const { filteredAssets, selectedAssetId, filter, search, assets } = storeToRefs(project)
+const { isImporting, importMessage } = storeToRefs(ui)
 
 const filters: { key: MediaFilter; icon: string; label: string }[] = [
   { key: 'all', icon: 'layers', label: 'Tudo' },
@@ -79,28 +80,56 @@ function dragAsset(e: DragEvent, asset: Asset) {
       @dragleave="dragOver = false"
       @drop.prevent="onDrop"
     >
-      <div v-if="ui.isImporting" class="skeletons">
-        <div v-for="n in 3" :key="n" class="skeleton" />
+      <div v-if="isImporting" class="importing">
+        <div class="importing-card">
+          <span class="importing-spinner" aria-hidden="true" />
+          <div class="importing-text">
+            <span class="importing-title">{{ importMessage ?? 'Importando…' }}</span>
+            <span v-if="importMessage?.startsWith('Convertendo GIF')" class="importing-hint">
+              Preparando animação para o preview…
+            </span>
+          </div>
+        </div>
+        <div class="skeletons">
+          <div v-for="n in 3" :key="n" class="skeleton" />
+        </div>
       </div>
 
-      <TransitionGroup v-else-if="filteredAssets.length" name="fade" tag="div" class="list">
-        <MediaItem
-          v-for="asset in filteredAssets"
-          :key="asset.id"
-          :asset="asset"
-          :selected="asset.id === selectedAssetId"
-          @select="project.selectAsset(asset.id)"
-          @add="timeline.addClipFromAsset(asset)"
-          @dragstart="dragAsset($event, asset)"
-        />
-      </TransitionGroup>
+      <div v-else-if="filteredAssets.length" class="list-content">
+        <TransitionGroup name="fade" tag="div" class="list">
+          <MediaItem
+            v-for="asset in filteredAssets"
+            :key="asset.id"
+            :asset="asset"
+            :selected="asset.id === selectedAssetId"
+            @select="project.selectAsset(asset.id)"
+            @add="timeline.addClipFromAsset(asset)"
+            @remove="project.removeAsset(asset.id)"
+            @dragstart="dragAsset($event, asset)"
+          />
+        </TransitionGroup>
+
+        <button
+          class="import-row"
+          type="button"
+          :disabled="isImporting"
+          @click="project.importMedia()"
+        >
+          <span class="import-thumb" aria-hidden="true">
+            <BaseIcon name="import" :size="16" />
+          </span>
+          <span class="import-label">
+            {{ isImporting ? (importMessage ?? 'Importando…') : 'Importar mídia' }}
+          </span>
+        </button>
+      </div>
 
       <EmptyState
         v-else
         icon="folder"
-        :title="search || filter !== 'all' ? 'Nada encontrado' : 'Biblioteca vazia'"
+        :title="assets.length ? 'Nada encontrado' : 'Biblioteca vazia'"
         :hint="
-          search || filter !== 'all'
+          assets.length
             ? 'Ajuste a busca ou o filtro de tipo.'
             : 'Arraste arquivos aqui ou use Importar para começar.'
         "
@@ -210,6 +239,96 @@ function dragAsset(e: DragEvent, asset: Asset) {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
+}
+.list-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 100%;
+}
+.import-row {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2);
+  margin-top: auto;
+  border-radius: var(--r-md);
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-mid);
+  text-align: left;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.import-row:hover:not(:disabled) {
+  background: var(--bg-4);
+  color: var(--text-hi);
+  box-shadow: inset 0 0 0 1px var(--accent-ring);
+}
+.import-row:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.importing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.importing-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-soft-strong);
+}
+.importing-spinner {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: var(--r-full);
+  border: 2px solid var(--accent-ring);
+  border-top-color: var(--accent);
+  animation: importing-spin 0.75s linear infinite;
+}
+.importing-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.importing-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-hi);
+}
+.importing-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-mid);
+}
+@keyframes importing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.import-thumb {
+  display: grid;
+  place-items: center;
+  height: 36px;
+  border-radius: var(--r-sm);
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-soft-strong);
+}
+.import-label {
+  font-size: var(--fs-sm);
+  font-weight: 500;
 }
 .skeletons {
   display: flex;

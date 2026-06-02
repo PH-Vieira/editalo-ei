@@ -27,17 +27,17 @@ export function useKeyboardShortcuts() {
         break
       case 'ArrowRight':
         e.preventDefault()
-        timeline.setCurrentTime(timeline.currentTime + (e.shiftKey ? 1 : frame))
+        timeline.userSeekTo(timeline.currentTime + (e.shiftKey ? 1 : frame))
         break
       case 'ArrowLeft':
         e.preventDefault()
-        timeline.setCurrentTime(timeline.currentTime - (e.shiftKey ? 1 : frame))
+        timeline.userSeekTo(timeline.currentTime - (e.shiftKey ? 1 : frame))
         break
       case 'Home':
-        timeline.setCurrentTime(0)
+        timeline.userSeekTo(0)
         break
       case 'End':
-        timeline.setCurrentTime(timeline.contentEnd)
+        timeline.userSeekTo(timeline.contentEnd)
         break
 
       /* ---- Histórico ---- */
@@ -57,22 +57,59 @@ export function useKeyboardShortcuts() {
         }
         break
 
-      /* ---- Edição ---- */
+      /* ---- Projeto ---- */
+      case 'n':
+      case 'N':
+        if (ctrl) {
+          e.preventDefault()
+          void project.requestNewProject()
+        }
+        break
+      case 'o':
+      case 'O':
+        if (ctrl) {
+          e.preventDefault()
+          void project.open()
+        }
+        break
+
+      /* ---- Edição de clipes ---- */
+      case 'c':
+      case 'C':
+        if (ctrl) {
+          e.preventDefault()
+          if (e.shiftKey) void project.saveAs()
+          else timeline.copySelectedClip()
+        }
+        break
+      case 'v':
+      case 'V':
+        if (ctrl) {
+          e.preventDefault()
+          timeline.pasteClipboard()
+        } else {
+          ui.setTool('select')
+        }
+        break
+      case 'd':
+      case 'D':
+        if (ctrl) {
+          e.preventDefault()
+          timeline.duplicateSelectedClip()
+        }
+        break
       case 's':
       case 'S':
         if (ctrl) {
           e.preventDefault()
-          project.save()
+          if (e.shiftKey) void project.saveAs()
+          else void project.save()
         } else {
           timeline.splitClipAt(timeline.currentTime)
         }
         break
 
       /* ---- Ferramentas ---- */
-      case 'v':
-      case 'V':
-        if (!ctrl) ui.setTool('select')
-        break
       case 'b':
       case 'B':
         if (!ctrl) ui.setTool('blade')

@@ -3,9 +3,9 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import BaseIcon from '@/components/ui/BaseIcon.vue'
 import PlayerControls from './PlayerControls.vue'
+import PreviewLayer from './PreviewLayer.vue'
 import { useTimelineStore } from '@/stores/timeline'
 import { useProjectStore } from '@/stores/project'
-import { kindLabel } from '@/utils/format'
 import { toMediaSrc } from '@/tauri/commands'
 import type { Clip } from '@/types'
 
@@ -14,34 +14,76 @@ const project = useProjectStore()
 const { currentTime, isPlaying } = storeToRefs(timeline)
 
 const aspect = computed(() => `${project.project.width} / ${project.project.height}`)
+const projW = computed(() => project.project.width)
+const projH = computed(() => project.project.height)
+
+function trackOf(clip: Clip) {
+  return timeline.tracks.find((t) => t.id === clip.trackId)
+}
 
 // Clipes visíveis sob o playhead, do topo (maior z) para baixo.
 const activeVisuals = computed(() =>
   timeline.clips
+    .filter((c) => {
+      if (c.kind !== 'video' && c.kind !== 'image' && c.kind !== 'text') return false
+      if (currentTime.value < c.start || currentTime.value >= c.start + c.duration) return false
+      return !trackOf(c)?.hidden
+    })
+    .sort((a, b) => (trackOf(b)?.index ?? 0) - (trackOf(a)?.index ?? 0)),
+)
+
+/** Ordem de pintura: trilha de baixo primeiro, topo por último. */
+const stackedVisuals = computed(() => [...activeVisuals.value].reverse())
+
+/** Vídeo do topo que dirige o relógio do playhead. */
+const masterVideoClip = computed(() => activeVisuals.value.find((c) => c.kind === 'video') ?? null)
+
+const shouldSyncVideo = computed(() => !isPlaying.value || timeline.isUserSeeking)
+
+const videoEl = ref<HTMLVideoElement | null>(null)
+
+function onMasterVideo(el: HTMLVideoElement | null) {
+  videoEl.value = el
+}
+
+watch(masterVideoClip, (clip) => {
+  if (!clip) {
+    videoEl.value?.pause()
+    videoEl.value = null
+  }
+})
+const audioEl = ref<HTMLAudioElement | null>(null)
+const audioSrc = ref<string | undefined>()
+
+/** Clipe de áudio dedicado sob o playhead (trilha de áudio). */
+const activeAudioClip = computed(() => {
+  const clips = timeline.clips
     .filter(
       (c) =>
-        (c.kind === 'video' || c.kind === 'image' || c.kind === 'text') &&
+        c.kind === 'audio' &&
         currentTime.value >= c.start &&
         currentTime.value < c.start + c.duration,
     )
+    .filter((c) => {
+      const tr = timeline.tracks.find((t) => t.id === c.trackId)
+      return tr && !tr.muted
+    })
     .sort((a, b) => {
       const ta = timeline.tracks.find((t) => t.id === a.trackId)?.index ?? 0
       const tb = timeline.tracks.find((t) => t.id === b.trackId)?.index ?? 0
       return tb - ta
-    }),
-)
-const topVisual = computed(() => activeVisuals.value[0] ?? null)
-
-const videoEl = ref<HTMLVideoElement | null>(null)
-const mediaSrc = ref<string | undefined>()
-const mediaKind = ref<'video' | 'image' | null>(null)
-
-// O áudio do preview respeita o mute da trilha do clipe ativo.
-const activeMuted = computed(() => {
-  const clip = topVisual.value
-  if (!clip) return true
-  return timeline.tracks.find((t) => t.id === clip.trackId)?.muted ?? false
+    })
+  return clips[0] ?? null
 })
+
+function applyAudioOutput() {
+  const a = audioEl.value
+  const clip = activeAudioClip.value
+  if (!a || !clip) return
+  const track = trackOf(clip)
+  a.muted = !!(track?.muted)
+  a.volume = Math.min(1, Math.max(0, clip.volume))
+}
 
 /** Tempo dentro da fonte correspondente a um tempo da timeline. */
 function localOffset(clip: Clip, t: number): number {
@@ -49,49 +91,55 @@ function localOffset(clip: Clip, t: number): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* Carregamento do arquivo do clipe ativo                             */
+/* Carregamento do clipe de áudio dedicado                            */
 /* ------------------------------------------------------------------ */
 watch(
-  () => topVisual.value?.assetId ?? null,
+  () => activeAudioClip.value?.assetId ?? null,
   async (assetId) => {
-    const clip = topVisual.value
+    const clip = activeAudioClip.value
     const asset = assetId ? project.assets.find((a) => a.id === assetId) : null
-    if (clip && asset?.src && (clip.kind === 'video' || clip.kind === 'image')) {
-      mediaSrc.value = await toMediaSrc(asset.src)
-      mediaKind.value = clip.kind
+    if (clip && asset?.src) {
+      audioSrc.value = await toMediaSrc(asset.src)
     } else {
-      mediaSrc.value = undefined
-      mediaKind.value = null
+      audioSrc.value = undefined
     }
   },
   { immediate: true },
 )
 
-/** Quando o <video> tem dados suficientes: posiciona e retoma se estiver tocando. */
-function onCanPlay() {
-  const v = videoEl.value
-  const clip = topVisual.value
-  if (!v || !clip || mediaKind.value !== 'video') return
+watch(
+  () => [
+    activeAudioClip.value?.id,
+    activeAudioClip.value?.volume,
+    ...timeline.tracks.map((t) => t.muted),
+  ],
+  () => applyAudioOutput(),
+)
+
+function onAudioCanPlay() {
+  const a = audioEl.value
+  const clip = activeAudioClip.value
+  if (!a || !clip || !audioSrc.value) return
+  applyAudioOutput()
   const target = localOffset(clip, currentTime.value)
-  if (Math.abs(v.currentTime - target) > 0.06) {
+  if (Math.abs(a.currentTime - target) > 0.06) {
     try {
-      v.currentTime = target
+      a.currentTime = target
     } catch {
       /* ignora */
     }
   }
-  if (isPlaying.value) v.play().catch(() => {})
+  if (isPlaying.value) void a.play().catch(() => {})
 }
 
 /* ------------------------------------------------------------------ */
-/* Scrubbing: só seekamos o vídeo quando NÃO está tocando             */
-/* (durante a reprodução, o vídeo é a fonte do tempo)                 */
+/* Sincroniza o <video> quando o playhead muda na timeline            */
+/* (pausado, ou busca manual durante reprodução — estilo CapCut)        */
 /* ------------------------------------------------------------------ */
-watch(currentTime, (t) => {
-  if (isPlaying.value) return
+function syncMasterVideo(t: number) {
   const v = videoEl.value
-  const clip = topVisual.value
-  if (!v || !clip || mediaKind.value !== 'video') return
+  const clip = masterVideoClip.value
+  if (!v || !clip) return
   const target = localOffset(clip, t)
   if (Number.isFinite(target) && Math.abs(v.currentTime - target) > 0.04) {
     try {
@@ -100,6 +148,29 @@ watch(currentTime, (t) => {
       /* mídia ainda carregando */
     }
   }
+  if (isPlaying.value) void v.play().catch(() => {})
+}
+
+function syncAudioToPlayhead(t: number) {
+  const a = audioEl.value
+  const clip = activeAudioClip.value
+  if (!a || !clip || !audioSrc.value) return
+  applyAudioOutput()
+  const target = localOffset(clip, t)
+  if (Number.isFinite(target) && Math.abs(a.currentTime - target) > 0.04) {
+    try {
+      a.currentTime = target
+    } catch {
+      /* ignora */
+    }
+  }
+  if (isPlaying.value) void a.play().catch(() => {})
+}
+
+watch(currentTime, (t) => {
+  if (isPlaying.value && !timeline.isUserSeeking) return
+  syncMasterVideo(t)
+  syncAudioToPlayhead(t)
 })
 
 /* ------------------------------------------------------------------ */
@@ -111,22 +182,35 @@ let raf = 0
 let last = 0
 
 function tick(now: number) {
+  if (timeline.isUserSeeking) {
+    raf = requestAnimationFrame(tick)
+    return
+  }
   const dt = (now - last) / 1000
   last = now
   const v = videoEl.value
-  const clip = topVisual.value
-  const playingVideo = clip && mediaKind.value === 'video' && v && v.readyState >= 2 && !v.paused
+  const clip = masterVideoClip.value
+  const a = audioEl.value
+  const audioClip = activeAudioClip.value
+  const playingVideo = clip && v && v.readyState >= 2 && !v.paused
+  const playingAudio =
+    audioClip && a && audioSrc.value && a.readyState >= 2 && !a.paused
 
   if (playingVideo && v && clip) {
     const localEnd = clip.inPoint + clip.duration
     if (v.currentTime >= localEnd - 0.03) {
-      // Chegou ao fim deste clipe → empurra o playhead para o próximo.
       timeline.setCurrentTime(clip.start + clip.duration + 0.001)
     } else {
       timeline.setCurrentTime(clip.start + (v.currentTime - clip.inPoint))
     }
+  } else if (playingAudio && a && audioClip) {
+    const localEnd = audioClip.inPoint + audioClip.duration
+    if (a.currentTime >= localEnd - 0.03) {
+      timeline.setCurrentTime(audioClip.start + audioClip.duration + 0.001)
+    } else {
+      timeline.setCurrentTime(audioClip.start + (a.currentTime - audioClip.inPoint))
+    }
   } else {
-    // Sem vídeo ativo (imagem/áudio/intervalo): relógio simples.
     timeline.setCurrentTime(timeline.currentTime + dt)
   }
 
@@ -140,19 +224,23 @@ function tick(now: number) {
 }
 
 function startPlayback() {
-  const v = videoEl.value
-  const clip = topVisual.value
-  if (v && clip && mediaKind.value === 'video') {
-    const target = localOffset(clip, currentTime.value)
-    if (Math.abs(v.currentTime - target) > 0.06) {
+  syncMasterVideo(currentTime.value)
+
+  const a = audioEl.value
+  const audioClip = activeAudioClip.value
+  if (a && audioClip && audioSrc.value) {
+    applyAudioOutput()
+    const target = localOffset(audioClip, currentTime.value)
+    if (Math.abs(a.currentTime - target) > 0.06) {
       try {
-        v.currentTime = target
+        a.currentTime = target
       } catch {
         /* ignora */
       }
     }
-    v.play().catch(() => {})
+    void a.play().catch(() => {})
   }
+
   last = performance.now()
   cancelAnimationFrame(raf)
   raf = requestAnimationFrame(tick)
@@ -162,6 +250,7 @@ function stopPlayback() {
   cancelAnimationFrame(raf)
   raf = 0
   videoEl.value?.pause()
+  audioEl.value?.pause()
 }
 
 watch(isPlaying, (p) => (p ? startPlayback() : stopPlayback()))
@@ -180,47 +269,36 @@ onBeforeUnmount(stopPlayback)
 
     <div class="stage">
       <div class="viewport" :style="{ aspectRatio: aspect }">
+        <!-- Áudio das trilhas de som (clipes só-áudio) -->
+        <audio
+          ref="audioEl"
+          class="hidden-audio"
+          :src="audioSrc"
+          preload="auto"
+          @canplay="onAudioCanPlay"
+          @loadeddata="onAudioCanPlay"
+        />
+
         <div class="frame">
-          <!-- Vídeo real -->
-          <video
-            v-show="mediaKind === 'video' && mediaSrc"
-            ref="videoEl"
-            class="media"
-            :src="mediaSrc"
-            :muted="activeMuted"
-            playsinline
-            preload="auto"
-            @canplay="onCanPlay"
-            @loadeddata="onCanPlay"
+          <PreviewLayer
+            v-for="clip in stackedVisuals"
+            :key="clip.id"
+            :clip="clip"
+            :current-time="currentTime"
+            :is-playing="isPlaying"
+            :should-sync-video="shouldSyncVideo"
+            :is-master="clip.id === masterVideoClip?.id"
+            :track-muted="trackOf(clip)?.muted ?? false"
+            :volume="clip.volume"
+            :proj-w="projW"
+            :proj-h="projH"
+            @master-video="onMasterVideo"
           />
-          <!-- Imagem real -->
-          <img v-if="mediaKind === 'image' && mediaSrc" class="media" :src="mediaSrc" alt="" />
 
-          <!-- Placeholder (texto, sem arquivo, ou modo navegador) -->
-          <template v-if="!mediaSrc">
-            <template v-if="topVisual">
-              <div class="frame-fill" :style="{ background: topVisual.color }" />
-              <div class="frame-grad" />
-              <div class="frame-info">
-                <span class="frame-kind">
-                  <BaseIcon
-                    :name="topVisual.kind === 'image' ? 'image' : topVisual.kind === 'text' ? 'text' : 'video'"
-                    :size="13"
-                  />
-                  {{ kindLabel(topVisual.kind) }}
-                </span>
-                <span class="frame-name">{{ topVisual.name }}</span>
-              </div>
-            </template>
-            <div v-else class="frame-empty">
-              <BaseIcon name="film" :size="26" :stroke-width="1.3" />
-              <span>Sem mídia no playhead</span>
-            </div>
-          </template>
-
-          <span v-if="activeVisuals.length > 1" class="layer-count">
-            +{{ activeVisuals.length - 1 }} camada(s)
-          </span>
+          <div v-if="!activeVisuals.length" class="frame-empty">
+            <BaseIcon name="film" :size="26" :stroke-width="1.3" />
+            <span>Sem mídia no playhead</span>
+          </div>
         </div>
 
         <div class="guides" aria-hidden="true">
@@ -290,64 +368,14 @@ onBeforeUnmount(stopPlayback)
 .frame {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
-}
-.media {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  background: #000;
-}
-.frame-fill {
-  position: absolute;
-  inset: 0;
-  opacity: 0.16;
-}
-.frame-grad {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, transparent 40%, rgba(0, 0, 0, 0.5));
-}
-.frame-info {
-  position: absolute;
-  left: var(--sp-4);
-  bottom: var(--sp-4);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.frame-kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--fs-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-mid);
-}
-.frame-name {
-  font-family: var(--font-display);
-  font-size: var(--fs-xl);
-  font-weight: 600;
-  color: var(--text-hi);
-}
-.layer-count {
-  position: absolute;
-  top: var(--sp-3);
-  right: var(--sp-3);
-  font-size: var(--fs-2xs);
-  padding: 2px 8px;
-  border-radius: var(--r-full);
-  background: rgba(0, 0, 0, 0.45);
-  color: var(--text-mid);
 }
 .frame-empty {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: var(--sp-2);
   color: var(--text-lo);
   font-size: var(--fs-sm);
@@ -383,5 +411,12 @@ onBeforeUnmount(stopPlayback)
   inset: 6%;
   border: 1px dashed rgba(255, 255, 255, 0.14);
   border-radius: 2px;
+}
+.hidden-audio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 </style>

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import IconButton from '@/components/ui/IconButton.vue'
 import BaseIcon from '@/components/ui/BaseIcon.vue'
 import ExportModal from '@/components/ui/ExportModal.vue'
 import { useProjectStore } from '@/stores/project'
@@ -16,14 +15,16 @@ import {
   type ExportSegment,
 } from '@/tauri/commands'
 import WindowControls from '@/modules/titlebar/WindowControls.vue'
+import FileMenu from '@/modules/topbar/FileMenu.vue'
+import EditMenu from '@/modules/topbar/EditMenu.vue'
+import ViewMenu from '@/modules/topbar/ViewMenu.vue'
 import { useWindowControls } from '@/composables/useWindowControls'
 
 const project = useProjectStore()
 const timeline = useTimelineStore()
 const ui = useUiStore()
-const { project: proj } = storeToRefs(project)
-const { isImporting } = storeToRefs(ui)
-const { toggleMaximize, isDesktop } = useWindowControls()
+const { project: proj, filePath, fileName, isDirty, isSaving, saveMenuHint } = storeToRefs(project)
+const { maximized, minimize, toggleMaximize, close, isDesktop } = useWindowControls()
 
 /* ---- Modal de exportação ---- */
 const showExportModal = ref(false)
@@ -105,24 +106,30 @@ function buildSegments(): ExportSegment[] {
 
     <div class="divider" />
 
-    <nav class="actions" aria-label="Ações do projeto">
-      <IconButton icon="plus" label="Novo projeto (Ctrl+N)" @click="project.newProject()">
-        <span class="btn-text">Novo</span>
-      </IconButton>
-      <IconButton
-        icon="import"
-        label="Importar mídia"
-        :disabled="isImporting"
-        @click="project.importMedia()"
-      >
-        <span class="btn-text">{{ isImporting ? 'Importando…' : 'Importar' }}</span>
-      </IconButton>
-      <IconButton icon="save" label="Salvar projeto (Ctrl+S)" @click="project.save()">
-        <span class="btn-text">Salvar</span>
-      </IconButton>
+    <nav class="menus" aria-label="Menus principais">
+      <FileMenu />
+      <EditMenu />
+      <ViewMenu />
     </nav>
 
-    <div class="project-chip" title="Clique no nome para editar">
+    <button
+      type="button"
+      class="save-btn"
+      :class="{ dirty: isDirty, saving: isSaving }"
+      :disabled="isSaving"
+      :title="saveMenuHint"
+      aria-label="Salvar projeto"
+      @click="project.save()"
+    >
+      <BaseIcon name="save" :size="15" />
+      <span v-if="isDirty && !isSaving" class="dirty-dot" aria-hidden="true" />
+    </button>
+
+    <div class="divider" />
+    <div
+      class="project-chip"
+      :title="filePath ?? 'Projeto ainda não salvo em disco — use Arquivo → Salvar'"
+    >
       <input
         class="chip-name"
         :value="proj.name"
@@ -133,30 +140,32 @@ function buildSegments(): ExportSegment[] {
         @keydown.escape.prevent="($event.target as HTMLInputElement).value = proj.name; ($event.target as HTMLInputElement).blur()"
         @focus="($event.target as HTMLInputElement).select()"
       />
-      <span class="chip-meta mono">{{ proj.width }}×{{ proj.height }} · {{ proj.fps }}fps</span>
+      <span class="chip-meta mono" :class="{ dirty: isDirty, saving: isSaving }">
+        <span v-if="isSaving" class="save-state">Salvando…</span>
+        <template v-else>
+          <span v-if="isDirty" class="dirty-mark" aria-hidden="true">●</span>
+          <span class="save-state">{{ fileName ?? 'Não salvo' }}</span>
+          <span class="chip-sep">·</span>
+          <span>{{ proj.width }}×{{ proj.height }}</span>
+        </template>
+      </span>
     </div>
 
     <div class="spacer drag-region" :data-tauri-drag-region="isDesktop ? true : undefined" />
 
     <div class="right">
-      <IconButton
-        icon="layers"
-        label="Alternar biblioteca"
-        :active="ui.sidebarVisible"
-        @click="ui.toggleSidebar()"
-      />
-      <IconButton
-        icon="sliders"
-        label="Alternar inspetor"
-        :active="ui.inspectorVisible"
-        @click="ui.toggleInspector()"
-      />
       <button class="export-btn" type="button" @click="openExportModal">
         <BaseIcon name="export" :size="15" />
         <span>Exportar</span>
         <kbd>{{ timeline.contentEnd.toFixed(0) }}s</kbd>
       </button>
-      <WindowControls v-if="isDesktop" />
+      <WindowControls
+        v-if="isDesktop"
+        :maximized="maximized"
+        @minimize="minimize"
+        @toggle-maximize="toggleMaximize"
+        @close="close"
+      />
     </div>
   </header>
 
@@ -180,10 +189,67 @@ function buildSegments(): ExportSegment[] {
 }
 .topbar.is-desktop {
   padding-right: 0;
+  align-items: stretch;
+}
+.topbar.is-desktop .brand,
+.topbar.is-desktop .divider,
+.topbar.is-desktop .menus,
+.topbar.is-desktop .save-btn,
+.topbar.is-desktop .project-chip,
+.topbar.is-desktop .export-btn {
+  align-self: center;
+}
+.menus {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: none;
+}
+.save-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  color: var(--text-mid);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.save-btn:hover:not(:disabled) {
+  background: var(--bg-4);
+  color: var(--text-hi);
+}
+.save-btn.dirty {
+  color: var(--warning);
+}
+.save-btn.saving {
+  color: var(--accent);
+  opacity: 0.7;
+}
+.dirty-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--warning);
+  box-shadow: 0 0 0 2px var(--bg-0);
 }
 .drag-region {
   -webkit-app-region: drag;
   app-region: drag;
+}
+.actions,
+.project-chip,
+.right,
+.menus,
+.save-btn,
+:deep(.window-controls) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 .brand {
   display: flex;
@@ -210,7 +276,7 @@ function buildSegments(): ExportSegment[] {
   font-family: var(--font-display);
   font-weight: 700;
   font-size: var(--fs-lg);
-  letter-spacing: -0.02em;
+  letter-spacing: var(--tracking-display);
 }
 .tag {
   font-size: 9px;
@@ -222,14 +288,6 @@ function buildSegments(): ExportSegment[] {
   width: 1px;
   height: 24px;
   background: var(--border);
-}
-.actions {
-  display: flex;
-  gap: 2px;
-}
-.btn-text {
-  font-size: var(--fs-sm);
-  font-weight: 500;
 }
 .project-chip {
   display: flex;
@@ -271,6 +329,30 @@ function buildSegments(): ExportSegment[] {
 .chip-meta {
   font-size: var(--fs-2xs);
   color: var(--text-lo);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.chip-meta.dirty .save-state {
+  color: var(--warning);
+}
+.chip-meta.saving .save-state {
+  color: var(--accent);
+}
+.dirty-mark {
+  color: var(--warning);
+  font-size: 8px;
+  line-height: 1;
+}
+.save-state {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+.chip-sep {
+  opacity: 0.5;
 }
 .spacer {
   flex: 1;
@@ -278,6 +360,7 @@ function buildSegments(): ExportSegment[] {
 .right {
   display: flex;
   align-items: center;
+  align-self: stretch;
   gap: var(--sp-2);
 }
 .export-btn {

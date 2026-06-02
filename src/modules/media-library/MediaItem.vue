@@ -5,7 +5,7 @@ import { toClock } from '@/utils/time'
 import { formatBytes } from '@/utils/format'
 
 defineProps<{ asset: Asset; selected: boolean }>()
-const emit = defineEmits<{ select: []; add: []; dragstart: [e: DragEvent] }>()
+const emit = defineEmits<{ select: []; add: []; remove: []; dragstart: [e: DragEvent] }>()
 
 const iconByKind: Record<string, string> = {
   video: 'video',
@@ -39,15 +39,28 @@ const iconByKind: Record<string, string> = {
       <p class="name" :title="asset.name">{{ asset.name }}</p>
       <p class="sub mono">{{ formatBytes(asset.fileSize) }}</p>
     </div>
-    <button
-      class="add"
-      type="button"
-      draggable="false"
-      title="Adicionar à timeline"
-      @click.stop="emit('add')"
-    >
-      <BaseIcon name="plus" :size="14" />
-    </button>
+    <div class="actions">
+      <button
+        class="action add"
+        type="button"
+        draggable="false"
+        title="Adicionar à timeline"
+        aria-label="Adicionar à timeline"
+        @click.stop="emit('add')"
+      >
+        <BaseIcon name="plus" :size="14" />
+      </button>
+      <button
+        class="action remove"
+        type="button"
+        draggable="false"
+        title="Remover da biblioteca"
+        aria-label="Remover da biblioteca"
+        @click.stop="emit('remove')"
+      >
+        <BaseIcon name="trash" :size="14" />
+      </button>
+    </div>
   </article>
 </template>
 
@@ -123,7 +136,12 @@ const iconByKind: Record<string, string> = {
   font-size: var(--fs-2xs);
   color: var(--text-lo);
 }
-.add {
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.action {
   display: grid;
   place-items: center;
   width: 26px;
@@ -131,14 +149,21 @@ const iconByKind: Record<string, string> = {
   border-radius: var(--r-sm);
   color: var(--text-mid);
   opacity: 0;
-  transition: opacity var(--dur-fast), background var(--dur-fast);
+  transition:
+    opacity var(--dur-fast),
+    background var(--dur-fast),
+    color var(--dur-fast);
 }
-.media-item:hover .add,
-.media-item:focus-within .add {
+.media-item:hover .action,
+.media-item:focus-within .action {
   opacity: 1;
 }
 .add:hover {
   background: var(--accent);
   color: var(--text-on-accent);
+}
+.remove:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 </style>

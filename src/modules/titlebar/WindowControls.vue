@@ -1,25 +1,32 @@
 <script setup lang="ts">
 import BaseIcon from '@/components/ui/BaseIcon.vue'
-import { useWindowControls } from '@/composables/useWindowControls'
 
-const { maximized, minimize, toggleMaximize, close } = useWindowControls()
+defineProps<{
+  maximized: boolean
+}>()
+
+const emit = defineEmits<{
+  minimize: []
+  toggleMaximize: []
+  close: []
+}>()
 </script>
 
 <template>
   <div class="window-controls" role="group" aria-label="Controles da janela">
-    <button type="button" class="wc-btn" aria-label="Minimizar" @click="minimize">
-      <BaseIcon name="minimize" :size="12" />
+    <button type="button" class="wc-btn" aria-label="Minimizar" @click="emit('minimize')">
+      <BaseIcon name="minimize" :size="11" />
     </button>
     <button
       type="button"
       class="wc-btn"
       :aria-label="maximized ? 'Restaurar' : 'Maximizar'"
-      @click="toggleMaximize"
+      @click="emit('toggleMaximize')"
     >
-      <BaseIcon :name="maximized ? 'restore' : 'maximize'" :size="12" />
+      <BaseIcon :name="maximized ? 'restore' : 'maximize'" :size="11" />
     </button>
-    <button type="button" class="wc-btn wc-close" aria-label="Fechar" @click="close">
-      <BaseIcon name="close" :size="12" />
+    <button type="button" class="wc-btn wc-close" aria-label="Fechar" @click="emit('close')">
+      <BaseIcon name="close" :size="11" />
     </button>
   </div>
 </template>
@@ -29,13 +36,14 @@ const { maximized, minimize, toggleMaximize, close } = useWindowControls()
   display: flex;
   align-items: stretch;
   flex: none;
-  height: 100%;
-  margin: 0 calc(var(--sp-3) * -1) 0 var(--sp-2);
+  height: var(--topbar-h);
+  margin: 0 0 0 var(--sp-2);
 }
 .wc-btn {
   display: grid;
   place-items: center;
-  width: 46px;
+  width: 44px;
+  height: 100%;
   color: var(--text-mid);
   transition:
     background var(--dur-fast) var(--ease-out),

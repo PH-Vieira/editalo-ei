@@ -11,7 +11,7 @@ const timeline = useTimelineStore()
 const ui = useUiStore()
 const project = useProjectStore()
 const { activeTool } = storeToRefs(ui)
-const { pixelsPerSecond, currentTime, selectedClipId, canUndo, canRedo } = storeToRefs(timeline)
+const { pixelsPerSecond, currentTime, selectedClipId, canUndo, canRedo, hasClips } = storeToRefs(timeline)
 
 const tools: { key: TimelineTool; icon: string; label: string; key2: string }[] = [
   { key: 'select', icon: 'cursor', label: 'Selecionar', key2: 'V' },
@@ -67,14 +67,29 @@ const tools: { key: TimelineTool; icon: string; label: string; key2: string }[] 
       />
     </div>
 
+    <div class="sep" />
+
+    <div class="group tracks">
+      <IconButton
+        icon="video"
+        label="Adicionar trilha de vídeo"
+        @click="timeline.addTrack('video')"
+      />
+      <IconButton
+        icon="audio"
+        label="Adicionar trilha de áudio"
+        @click="timeline.addTrack('audio')"
+      />
+    </div>
+
     <div class="spacer" />
 
-    <div class="playhead-tc">
+    <div v-if="hasClips" class="playhead-tc">
       <BaseIcon name="clock" :size="13" />
       <span class="mono">{{ toTimecode(currentTime, project.project.fps) }}</span>
     </div>
 
-    <div class="sep" />
+    <div v-if="hasClips" class="sep" />
 
     <div class="group zoom">
       <IconButton icon="zoom-out" label="Reduzir zoom (-)" @click="timeline.zoomBy(0.8)" />
@@ -108,6 +123,11 @@ const tools: { key: TimelineTool; icon: string; label: string; key2: string }[] 
   gap: 2px;
 }
 .tools {
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+}
+.tracks {
   padding: 2px;
   border-radius: var(--r-sm);
   background: var(--bg-inset);

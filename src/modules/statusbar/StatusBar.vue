@@ -11,7 +11,8 @@ const timeline = useTimelineStore()
 const project = useProjectStore()
 const ui = useUiStore()
 const { pixelsPerSecond } = storeToRefs(timeline)
-const { renderStatus, renderProgress } = storeToRefs(ui)
+const { renderStatus, renderProgress, isImporting, importMessage } = storeToRefs(ui)
+const { saveStatusLabel, isDirty, isSaving, filePath } = storeToRefs(project)
 
 const zoomPct = computed(() => Math.round((pixelsPerSecond.value / 64) * 100))
 const renderLabel = computed(
@@ -23,6 +24,14 @@ const renderLabel = computed(
 <template>
   <footer class="statusbar">
     <div class="left">
+      <span
+        class="stat save-stat"
+        :class="{ dirty: isDirty, saving: isSaving, saved: filePath && !isDirty }"
+        :title="filePath ?? 'Salvar grava timeline, clipes e biblioteca em um arquivo .elei'"
+      >
+        <BaseIcon name="save" :size="12" />
+        <span class="mono save-label">{{ saveStatusLabel }}</span>
+      </span>
       <span class="stat">
         <BaseIcon name="resolution" :size="12" />
         <span class="mono">{{ formatResolution(project.project.width, project.project.height) }}</span>
@@ -38,6 +47,10 @@ const renderLabel = computed(
     </div>
 
     <div class="right">
+      <span v-if="isImporting" class="stat importing-stat" :title="importMessage ?? 'Importando mídia'">
+        <span class="importing-dot" aria-hidden="true" />
+        <span class="mono import-label">{{ importMessage ?? 'Importando…' }}</span>
+      </span>
       <span class="render" :class="`s-${renderStatus}`">
         <span class="render-dot" />
         {{ renderLabel }}
@@ -74,6 +87,26 @@ const renderLabel = computed(
   align-items: center;
   gap: 5px;
 }
+.save-stat {
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  background: var(--bg-2);
+  max-width: min(42vw, 320px);
+}
+.save-stat.dirty {
+  color: var(--warning);
+}
+.save-stat.saving {
+  color: var(--accent);
+}
+.save-stat.saved {
+  color: var(--success);
+}
+.save-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .render {
   display: inline-flex;
   align-items: center;
@@ -97,6 +130,26 @@ const renderLabel = computed(
 }
 .s-error .render-dot {
   background: var(--danger);
+}
+.importing-stat {
+  max-width: min(36vw, 280px);
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  color: var(--text-hi);
+}
+.import-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.importing-dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  animation: pulse 1s var(--ease-in-out) infinite;
 }
 @keyframes pulse {
   50% {

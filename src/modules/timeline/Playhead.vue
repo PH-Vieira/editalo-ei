@@ -6,7 +6,7 @@ import { useTimelineStore } from '@/stores/timeline'
 const HEADER_W = 168 // deve coincidir com --track-header-w
 
 const timeline = useTimelineStore()
-const { currentTime, pixelsPerSecond } = storeToRefs(timeline)
+const { currentTime, pixelsPerSecond, hasClips } = storeToRefs(timeline)
 
 const left = computed(() => HEADER_W + currentTime.value * pixelsPerSecond.value)
 
@@ -24,8 +24,10 @@ function findScroll(el: HTMLElement): HTMLElement | null {
 }
 
 function startDrag(e: PointerEvent) {
+  if (!hasClips.value) return
   e.preventDefault()
   e.stopPropagation()
+  timeline.beginUserSeek()
   const grip = e.currentTarget as HTMLElement
   const scrollEl = findScroll(grip)
   ;(grip as HTMLElement).setPointerCapture(e.pointerId)
@@ -38,6 +40,7 @@ function startDrag(e: PointerEvent) {
   }
 
   const up = () => {
+    timeline.endUserSeek()
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', up)
   }
@@ -47,7 +50,7 @@ function startDrag(e: PointerEvent) {
 </script>
 
 <template>
-  <div class="playhead" :style="{ left: `${left}px` }">
+  <div class="playhead" :class="{ inactive: !hasClips }" :style="{ left: `${left}px` }">
     <!-- O grip captura o evento diretamente — pointer-events: auto aqui -->
     <div class="grip" @pointerdown="startDrag" />
     <div class="line" />
@@ -63,6 +66,10 @@ function startDrag(e: PointerEvent) {
   z-index: 16;
   /* O próprio div é inerte; só o .grip e .line são ativos. */
   pointer-events: none;
+}
+.playhead.inactive .grip {
+  opacity: 0.35;
+  cursor: default;
 }
 .grip {
   position: absolute;

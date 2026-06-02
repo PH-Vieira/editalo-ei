@@ -158,7 +158,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   font-size: var(--fs-xl);
   font-weight: 700;
   color: var(--text-hi);
-  letter-spacing: -0.01em;
+  letter-spacing: var(--tracking-display);
 }
 .modal-sub {
   font-size: var(--fs-xs);
@@ -223,7 +223,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-hi);
-  letter-spacing: -0.01em;
+  letter-spacing: var(--tracking-display);
 }
 .fmt-desc {
   font-size: var(--fs-sm);

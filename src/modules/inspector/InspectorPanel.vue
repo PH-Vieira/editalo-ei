@@ -186,6 +186,7 @@ const hasAudio = computed(() => selectedClip.value?.kind === 'video' || selected
   font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--text-hi);
+  letter-spacing: var(--tracking-display);
   border-radius: var(--r-xs);
 }
 .clip-name:hover {

@@ -59,6 +59,8 @@ export interface Track {
   locked: boolean
   hidden: boolean
   height: number
+  /** Trilha criada manualmente (+); não é removida automaticamente quando vazia. */
+  userCreated?: boolean
 }
 
 export interface Project {
@@ -72,7 +74,23 @@ export interface Project {
   modifiedAt: number
 }
 
+/** Arquivo .elei — projeto completo serializado. */
+export interface ProjectFile {
+  version: 1
+  project: Project
+  assets: Asset[]
+  tracks: Track[]
+  clips: Clip[]
+}
+
 export type RenderStatus = 'idle' | 'ready' | 'exporting' | 'error'
+
+export type UnsavedAction = 'save' | 'discard' | 'cancel'
+
+export interface UnsavedDialogState {
+  title: string
+  message: string
+}
 
 export interface SystemMessage {
   id: string

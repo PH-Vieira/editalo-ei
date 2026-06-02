@@ -15,6 +15,7 @@ interface Tick {
 }
 
 const ticks = computed<Tick[]>(() => {
+  if (!timeline.hasClips || timeline.duration <= 0) return []
   const step = rulerStep(pixelsPerSecond.value)
   const sub = step / 2
   const result: Tick[] = []
@@ -32,7 +33,11 @@ const ticks = computed<Tick[]>(() => {
 </script>
 
 <template>
-  <div class="ruler" :style="{ width: `${timeline.duration * pixelsPerSecond}px` }">
+  <div
+    class="ruler"
+    :class="{ empty: !timeline.hasClips }"
+    :style="{ width: timeline.hasClips ? `${timeline.duration * pixelsPerSecond}px` : '0' }"
+  >
     <div
       v-for="(tick, i) in ticks"
       :key="i"
@@ -50,6 +55,9 @@ const ticks = computed<Tick[]>(() => {
   position: relative;
   height: 100%;
   min-width: 100%;
+}
+.ruler.empty {
+  min-width: 0;
 }
 .tick {
   position: absolute;
