@@ -1,0 +1,125 @@
+@import './fonts.css';
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--text-hi);
+  background: var(--bg-0);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01' 1, 'cv01' 1;
+  user-select: none;
+  cursor: default;
+}
+
+/* O cursor de texto só onde faz sentido. */
+input,
+textarea,
+[contenteditable='true'] {
+  user-select: text;
+  cursor: text;
+  font-family: inherit;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ---- Foco visível e consistente ---- */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+  border-radius: var(--r-xs);
+}
+
+/* ---- Scrollbars discretas ---- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--r-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #434d5a;
+  background-clip: padding-box;
+}
+
+/* ---- Seleção de texto ---- */
+::selection {
+  background: var(--accent-soft-strong);
+  color: var(--text-hi);
+}
+
+/* ---- Transições de painel reutilizáveis ---- */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity var(--dur-med) var(--ease-out);
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.panel-slide-enter-active,
+.panel-slide-leave-active {
+  transition:
+    transform var(--dur-med) var(--ease-out),
+    opacity var(--dur-med) var(--ease-out);
+}
+.panel-slide-enter-from,
+.panel-slide-leave-to {
+  opacity: 0;
+  transform: translateX(8px);
+}
