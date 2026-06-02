@@ -573,7 +573,7 @@ export const useTimelineStore = defineStore('timeline', {
       this.tracks = []
     },
 
-    /** Restaura timeline a partir de um arquivo .elei. */
+    /** Restaura timeline a partir de um arquivo .regua. */
     loadState(tracks: Track[], clips: Clip[]) {
       this.tracks = deepClone(tracks)
       this.clips = deepClone(clips)

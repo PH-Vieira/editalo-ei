@@ -99,7 +99,7 @@ function buildSegments(): ExportSegment[] {
         <BaseIcon name="film" :size="17" :stroke-width="1.7" />
       </div>
       <div class="title">
-        <span class="name">Editá-lo-ei</span>
+        <span class="name">NaRégua</span>
         <span class="tag">studio</span>
       </div>
     </div>

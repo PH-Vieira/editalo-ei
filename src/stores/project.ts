@@ -67,7 +67,7 @@ export const useProjectStore = defineStore('project', {
           ? `Salvar em ${basename(state.filePath)}`
           : `Já salvo em ${basename(state.filePath)}`
       }
-      return 'Escolher onde salvar (.elei)'
+      return 'Escolher onde salvar (.regua)'
     },
   },
 
@@ -162,7 +162,7 @@ export const useProjectStore = defineStore('project', {
         let path = this.filePath
         if (!path || saveAs) {
           const safeName = this.project.name.replace(/[^\w\sÀ-ú-]/g, '').trim() || 'projeto'
-          path = await pickProjectSavePath(`${safeName}.elei`)
+          path = await pickProjectSavePath(`${safeName}.regua`)
           if (!path) return false
         }
 
@@ -250,7 +250,7 @@ export const useProjectStore = defineStore('project', {
         ui.notify(`Projeto aberto: ${basename(picked.path)}`, 'success')
         return true
       } catch {
-        ui.notify('Arquivo .elei inválido ou corrompido', 'danger')
+        ui.notify('Arquivo .regua inválido ou corrompido', 'danger')
         return false
       }
     },

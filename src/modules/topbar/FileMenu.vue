@@ -92,7 +92,7 @@ async function onOpenRecent(path: string) {
       class="menu-item"
       role="menuitem"
       :disabled="isSaving"
-      :title="filePath ? 'Escolher outro caminho' : 'Salvar em .elei'"
+      :title="filePath ? 'Escolher outro caminho' : 'Salvar em .regua'"
       @click="onSaveAs"
     >
       <BaseIcon name="save" :size="15" />

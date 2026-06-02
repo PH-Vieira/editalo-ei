@@ -27,7 +27,7 @@ const renderLabel = computed(
       <span
         class="stat save-stat"
         :class="{ dirty: isDirty, saving: isSaving, saved: filePath && !isDirty }"
-        :title="filePath ?? 'Salvar grava timeline, clipes e biblioteca em um arquivo .elei'"
+        :title="filePath ?? 'Salvar grava timeline, clipes e biblioteca em um arquivo .regua'"
       >
         <BaseIcon name="save" :size="12" />
         <span class="mono save-label">{{ saveStatusLabel }}</span>

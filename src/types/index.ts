@@ -1,5 +1,5 @@
 /* ============================================================
-   Modelo de dados do Editá-lo-ei
+   Modelo de dados do NaRégua
    Project → Track[] → Clip[]  ↔  Asset[]
    ============================================================ */
 
@@ -74,7 +74,7 @@ export interface Project {
   modifiedAt: number
 }
 
-/** Arquivo .elei — projeto completo serializado. */
+/** Arquivo .regua — projeto completo serializado. */
 export interface ProjectFile {
   version: 1
   project: Project

@@ -784,7 +784,7 @@ pub fn extract_waveform(request: WaveformRequest) -> Result<Vec<f32>, String> {
 }
 
 /* ------------------------------------------------------------------ */
-/* Persistência de projeto (.elei)                                     */
+/* Persistência de projeto (.regua)                                     */
 /* ------------------------------------------------------------------ */
 
 #[tauri::command]

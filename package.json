@@ -1,8 +1,8 @@
 {
-  "name": "editalo-ei",
+  "name": "naregua",
   "version": "0.1.0",
   "private": true,
-  "description": "Editá-lo-ei — editor de vídeo desktop premium para Windows (Tauri + Vue 3)",
+  "description": "NaRégua — editor de vídeo desktop premium para Windows (Tauri + Vue 3)",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -104,20 +104,20 @@ export async function importMedia(
   return assets
 }
 
-/* ---------- Projeto (persistência .elei) ---------- */
+/* ---------- Projeto (persistência .regua) ---------- */
 
 /** Abre o diálogo nativo para escolher onde salvar o projeto. */
 export async function pickProjectSavePath(suggested: string): Promise<string | null> {
   if (!isTauri()) return suggested
   const { save } = await import('@tauri-apps/api/dialog')
   return (await save({
-    defaultPath: suggested.endsWith('.elei') ? suggested : `${suggested}.elei`,
-    filters: [{ name: 'Projeto Editá-lo-ei', extensions: ['elei'] }],
+    defaultPath: suggested.endsWith('.regua') ? suggested : `${suggested}.regua`,
+    filters: [{ name: 'Projeto NaRégua', extensions: ['regua'] }],
   })) as string | null
 }
 
-function ensureEleiExtension(path: string): string {
-  return path.toLowerCase().endsWith('.elei') ? path : `${path}.elei`
+function ensureReguaExtension(path: string): string {
+  return path.toLowerCase().endsWith('.regua') ? path : `${path}.regua`
 }
 
 function downloadProjectFile(content: string, filename: string) {
@@ -130,9 +130,9 @@ function downloadProjectFile(content: string, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-/** Grava o projeto completo em um arquivo .elei. */
+/** Grava o projeto completo em um arquivo .regua. */
 export async function writeProjectFile(path: string, data: ProjectFile): Promise<string> {
-  const normalized = ensureEleiExtension(path)
+  const normalized = ensureReguaExtension(path)
   const content = JSON.stringify(data, null, 2)
 
   if (isTauri()) {
@@ -140,15 +140,15 @@ export async function writeProjectFile(path: string, data: ProjectFile): Promise
     return normalized
   }
 
-  const name = normalized.split(/[/\\]/).pop() ?? 'projeto.elei'
+  const name = normalized.split(/[/\\]/).pop() ?? 'projeto.regua'
   downloadProjectFile(content, name)
   return normalized
 }
 
 function parseProjectFile(raw: unknown): ProjectFile {
-  if (!raw || typeof raw !== 'object') throw new Error('Arquivo .elei inválido')
+  if (!raw || typeof raw !== 'object') throw new Error('Arquivo .regua inválido')
   const data = raw as Partial<ProjectFile>
-  if (data.version !== 1 || !data.project) throw new Error('Formato .elei não reconhecido')
+  if (data.version !== 1 || !data.project) throw new Error('Formato .regua não reconhecido')
   return {
     version: 1,
     project: data.project,
@@ -158,17 +158,17 @@ function parseProjectFile(raw: unknown): ProjectFile {
   }
 }
 
-/** Abre o diálogo nativo para escolher um projeto .elei. */
+/** Abre o diálogo nativo para escolher um projeto .regua. */
 export async function pickProjectOpenPath(): Promise<string | null> {
   if (!isTauri()) return null
   const { open } = await import('@tauri-apps/api/dialog')
   return (await open({
     multiple: false,
-    filters: [{ name: 'Projeto Editá-lo-ei', extensions: ['elei'] }],
+    filters: [{ name: 'Projeto NaRégua', extensions: ['regua'] }],
   })) as string | null
 }
 
-/** Lê um projeto .elei do disco. */
+/** Lê um projeto .regua do disco. */
 export async function readProjectFile(path: string): Promise<ProjectFile> {
   const content = isTauri()
     ? await invoke<string>('load_project_file', { path })
@@ -176,12 +176,12 @@ export async function readProjectFile(path: string): Promise<ProjectFile> {
   return parseProjectFile(JSON.parse(content))
 }
 
-/** No navegador: seleciona um .elei e devolve conteúdo + nome do arquivo. */
+/** No navegador: seleciona um .regua e devolve conteúdo + nome do arquivo. */
 export async function pickProjectFileBrowser(): Promise<{ path: string; data: ProjectFile } | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.elei,application/json'
+    input.accept = '.regua,application/json'
     input.onchange = async () => {
       const file = input.files?.[0]
       if (!file) {

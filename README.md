@@ -1,4 +1,4 @@
-# Editá-lo-ei
+# NaRégua
 
 Editor de vídeo desktop para **Windows**, construído com Tauri + Vue 3 + TypeScript.  
 Timeline interativa, corte real de clipes e exportação via FFmpeg embutido — sem instalação extra.
@@ -21,7 +21,7 @@ Timeline interativa, corte real de clipes e exportação via FFmpeg embutido —
 
 ### Download (recomendado)
 
-Baixe o instalador `.exe` na página de [Releases](https://github.com/PH-Vieira/editalo-ei/releases).  
+Baixe o instalador `.exe` na página de [Releases](https://github.com/PH-Vieira/naregua/releases).  
 Execute e siga o assistente — o FFmpeg já vem embutido.
 
 ### Compilar do código-fonte
@@ -39,8 +39,8 @@ rustc -vV | grep host
 # ffmpeg-x86_64-pc-windows-msvc.exe
 # ffprobe-x86_64-pc-windows-msvc.exe
 
-git clone https://github.com/PH-Vieira/editalo-ei.git
-cd editalo-ei
+git clone https://github.com/PH-Vieira/naregua.git
+cd naregua
 npm install
 npm run tauri:dev     # modo desenvolvimento
 npm run tauri:build   # gera instalador em src-tauri/target/release/bundle/

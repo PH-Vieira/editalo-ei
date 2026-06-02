@@ -24,5 +24,5 @@ fn main() {
             commands::load_project_file,
         ])
         .run(tauri::generate_context!())
-        .expect("erro ao iniciar a aplicação Editá-lo-ei");
+        .expect("erro ao iniciar a aplicação NaRégua");
 }

@@ -1,6 +1,6 @@
 import { basename } from '@/utils/format'
 
-const STORAGE_KEY = 'editalo-ei:recent-projects'
+const STORAGE_KEY = 'naregua:recent-projects'
 const MAX_RECENT = 8
 
 export interface RecentProject {
