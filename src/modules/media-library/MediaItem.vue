@@ -39,7 +39,13 @@ const iconByKind: Record<string, string> = {
       <p class="name" :title="asset.name">{{ asset.name }}</p>
       <p class="sub mono">{{ formatBytes(asset.fileSize) }}</p>
     </div>
-    <button class="add" type="button" title="Adicionar à timeline" @click.stop="emit('add')">
+    <button
+      class="add"
+      type="button"
+      draggable="false"
+      title="Adicionar à timeline"
+      @click.stop="emit('add')"
+    >
       <BaseIcon name="plus" :size="14" />
     </button>
   </article>

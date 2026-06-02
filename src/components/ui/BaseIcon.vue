@@ -49,6 +49,10 @@ const ICONS: Record<string, string> = {
   check: '<path d="M20 6L9 17l-5-5"/>',
   undo: '<path d="M3 10h10a6 6 0 010 12H9M3 10l4-4M3 10l4 4"/>',
   redo: '<path d="M21 10H11a6 6 0 000 12h4M21 10l-4-4M21 10l-4 4"/>',
+  minimize: '<path d="M5 12h14" stroke-width="2"/>',
+  maximize: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
+  restore: '<path d="M8 8h9v9H8V8z"/><path d="M7 16H6a1 1 0 01-1-1V7a1 1 0 011-1h8"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18" stroke-width="2"/>',
 }
 
 const inner = computed(() => ICONS[props.name] ?? '')

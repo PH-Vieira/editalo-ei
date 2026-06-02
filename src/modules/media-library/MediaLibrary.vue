@@ -31,8 +31,11 @@ function onDrop(e: DragEvent) {
 }
 
 function dragAsset(e: DragEvent, asset: Asset) {
-  e.dataTransfer?.setData('application/x-asset-id', asset.id)
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy'
+  if (!e.dataTransfer) return
+  // MIME customizado + text/plain: alguns webviews só expõem text/plain no dragover.
+  e.dataTransfer.setData('application/x-asset-id', asset.id)
+  e.dataTransfer.setData('text/plain', asset.id)
+  e.dataTransfer.effectAllowed = 'copy'
 }
 </script>
 

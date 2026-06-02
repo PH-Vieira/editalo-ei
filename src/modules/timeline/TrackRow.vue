@@ -15,7 +15,8 @@ const dragOver = ref(false)
 function onDrop(e: DragEvent) {
   e.stopPropagation()
   dragOver.value = false
-  const assetId = e.dataTransfer?.getData('application/x-asset-id')
+  const assetId =
+    e.dataTransfer?.getData('application/x-asset-id') || e.dataTransfer?.getData('text/plain')
   if (!assetId) return
   const asset = project.assets.find((a) => a.id === assetId)
   if (!asset) return

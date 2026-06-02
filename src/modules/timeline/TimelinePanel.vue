@@ -20,18 +20,27 @@ const HEADER_W = 168
 /* ---- Drop de mídia fora de uma trilha específica (fallback) ---- */
 const globalDragOver = ref(false)
 
+const ASSET_DRAG_TYPES = ['application/x-asset-id', 'text/plain'] as const
+
+function isAssetDrag(e: DragEvent): boolean {
+  const types = e.dataTransfer?.types
+  if (!types) return false
+  return ASSET_DRAG_TYPES.some((t) => types.includes(t))
+}
+
 function onGlobalDragOver(e: DragEvent) {
-  if (e.dataTransfer?.types.includes('application/x-asset-id')) {
-    e.preventDefault()
-    globalDragOver.value = true
-  }
+  if (!isAssetDrag(e)) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  globalDragOver.value = true
 }
 
 function onGlobalDrop(e: DragEvent) {
   globalDragOver.value = false
   // stopPropagation no TrackRow previne que cheguemos aqui se a lane recebeu
-  const assetId = e.dataTransfer?.getData('application/x-asset-id')
-  if (!assetId) return
+  const assetId =
+    e.dataTransfer?.getData('application/x-asset-id') || e.dataTransfer?.getData('text/plain')
+  if (!assetId || !project.assets.some((a) => a.id === assetId)) return
   const asset = project.assets.find((a) => a.id === assetId)
   if (!asset) return
   // Calcula o tempo a partir da posição X, respeitando scroll
@@ -218,5 +227,7 @@ watch(currentTime, (t) => {
   position: absolute;
   inset: 30px 0 0 var(--track-header-w);
   background: var(--bg-inset);
+  /* Não interceptar drag/drop — as trilhas por baixo precisam receber o soltar. */
+  pointer-events: none;
 }
 </style>

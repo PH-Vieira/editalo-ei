@@ -27,6 +27,14 @@
       "protocol": {
         "asset": true,
         "assetScope": ["**"]
+      },
+      "window": {
+        "all": false,
+        "close": true,
+        "minimize": true,
+        "maximize": true,
+        "unmaximize": true,
+        "startDragging": true
       }
     },
     "windows": [
@@ -38,9 +46,10 @@
         "minHeight": 720,
         "resizable": true,
         "fullscreen": false,
-        "decorations": true,
+        "decorations": false,
         "transparent": false,
-        "theme": "Dark"
+        "theme": "Dark",
+        "fileDropEnabled": false
       }
     ],
     "security": {

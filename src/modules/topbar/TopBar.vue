@@ -15,12 +15,15 @@ import {
   type ExportFormat,
   type ExportSegment,
 } from '@/tauri/commands'
+import WindowControls from '@/modules/titlebar/WindowControls.vue'
+import { useWindowControls } from '@/composables/useWindowControls'
 
 const project = useProjectStore()
 const timeline = useTimelineStore()
 const ui = useUiStore()
 const { project: proj } = storeToRefs(project)
 const { isImporting } = storeToRefs(ui)
+const { toggleMaximize, isDesktop } = useWindowControls()
 
 /* ---- Modal de exportação ---- */
 const showExportModal = ref(false)
@@ -85,8 +88,12 @@ function buildSegments(): ExportSegment[] {
 </script>
 
 <template>
-  <header class="topbar">
-    <div class="brand">
+  <header class="topbar" :class="{ 'is-desktop': isDesktop }">
+    <div
+      class="brand drag-region"
+      :data-tauri-drag-region="isDesktop ? true : undefined"
+      @dblclick="isDesktop && toggleMaximize()"
+    >
       <div class="mark" aria-hidden="true">
         <BaseIcon name="film" :size="17" :stroke-width="1.7" />
       </div>
@@ -129,7 +136,7 @@ function buildSegments(): ExportSegment[] {
       <span class="chip-meta mono">{{ proj.width }}×{{ proj.height }} · {{ proj.fps }}fps</span>
     </div>
 
-    <div class="spacer" />
+    <div class="spacer drag-region" :data-tauri-drag-region="isDesktop ? true : undefined" />
 
     <div class="right">
       <IconButton
@@ -149,6 +156,7 @@ function buildSegments(): ExportSegment[] {
         <span>Exportar</span>
         <kbd>{{ timeline.contentEnd.toFixed(0) }}s</kbd>
       </button>
+      <WindowControls v-if="isDesktop" />
     </div>
   </header>
 
@@ -169,6 +177,13 @@ function buildSegments(): ExportSegment[] {
   padding: 0 var(--sp-3);
   background: var(--bg-0);
   border-bottom: 1px solid var(--border);
+}
+.topbar.is-desktop {
+  padding-right: 0;
+}
+.drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 .brand {
   display: flex;
